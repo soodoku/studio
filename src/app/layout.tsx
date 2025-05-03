@@ -1,17 +1,11 @@
 import type { Metadata } from 'next';
-import { GeistSans } from 'geist/font/sans'; // Corrected import path for GeistSans
+import { GeistSans } from 'geist/font/sans';
 import './globals.css';
-import { Toaster } from '@/components/ui/toaster'; // Import Toaster
+import { Toaster } from '@/components/ui/toaster';
 
-// No need to call GeistSans as a function here, it's used directly in className
-// const geistSans = GeistSans({
-//   variable: '--font-geist-sans', // This variable usage is often handled differently now or implicitly by Next.js
-//   subsets: ['latin'],
-// });
-
-export const metadata: Metadata = {
-  title: 'AudioBook Buddy', // Updated title
-  description: 'Upload PDFs/ePUBs, listen to audio, and take notes.', // Updated description
+export const metadata = {
+  title: 'AudioBook Buddy',
+  description: 'Upload PDFs/ePUBs, listen to audio, and take notes.',
 };
 
 export default function RootLayout({
@@ -19,13 +13,14 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Apply font className directly and consistently
+  const bodyClassName = `${GeistSans.className} antialiased`;
+
   return (
     <html lang="en">
-      {/* Apply the font class directly to the body or html tag */}
-      {/* Use the className provided by GeistSans directly */}
-      <body className={`${GeistSans.className} antialiased`}>
+      <body className={bodyClassName}>
         {children}
-        <Toaster /> {/* Add Toaster component */}
+        <Toaster />
       </body>
     </html>
   );
