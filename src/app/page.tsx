@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth hook
+import { AuthProvider, useAuth } from '@/contexts/AuthContext'; // Import AuthProvider
 import { db, auth } from '@/lib/firebase/clientApp'; // Import Firestore DB and Auth
 import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc } from 'firebase/firestore'; // Firestore functions
 import { FileUpload } from '@/components/feature/file-upload';
@@ -143,8 +143,8 @@ function HomeContent() {
                 description: `${fileName} added to your library.`,
             });
             // No need to manually update state, onSnapshot will handle it
-            setViewMode('library'); // Stay in library view
-            // Reset player state if a book was playing
+            // setViewMode('library'); // Stay in library view -- Removed, let user stay if they were in reader
+            // Reset player state if a book was playing irrelevant to the added book
             if (isPlaying || isPausedState) {
                 stopSpeech();
                 setIsPlaying(false);
@@ -236,8 +236,8 @@ function HomeContent() {
     if (isPausedState) {
       resumeSpeech();
       // State update handled by onResume listener in tts.ts
-      setIsPlaying(true);
-      setIsPausedState(false);
+      // setIsPlaying(true); // Let callback handle this
+      // setIsPausedState(false);
     } else if (!isPlaying) {
        // Start speaking
        speakText(
@@ -280,8 +280,8 @@ function HomeContent() {
     if (isPlaying && typeof window !== 'undefined' && window.speechSynthesis) {
       pauseSpeech();
       // State update relies on onPause listener in tts.ts
-       setIsPlaying(false); // Optimistic update helps UI responsiveness
-       setIsPausedState(true);
+       // setIsPlaying(false); // Let callback handle this
+       // setIsPausedState(true);
     }
   };
 
@@ -289,8 +289,8 @@ function HomeContent() {
      if (typeof window !== 'undefined' && window.speechSynthesis) {
         stopSpeech();
         // State update relies on onEnd listener triggered by cancel()
-        setIsPlaying(false); // Optimistic update
-        setIsPausedState(false);
+        // setIsPlaying(false); // Let callback handle this
+        // setIsPausedState(false);
      }
   };
 
@@ -353,7 +353,7 @@ function HomeContent() {
          title: "Quiz Generated",
          description: "Quiz questions created successfully.",
        });
-    } catch (error) {
+    } catch (error: any) { // Catch 'any' to access digest if present
         console.error("Error generating quiz (client-side catch):", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
         let userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`; // Default to the raw error message
@@ -368,7 +368,12 @@ function HomeContent() {
         } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('server error') || errorMessage.includes('network error')) {
              // More generic network/server error if specific details aren't available
              userFriendlyMessage = "Failed to generate quiz: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
-        } else {
+        } else if (error?.digest) {
+             // If there's a digest, mention it for server-side debugging
+             userFriendlyMessage = `Failed to generate quiz due to a server component error (Digest: ${error.digest}). Check server logs for details.`;
+             console.error("Server Component Error Digest:", error.digest);
+        }
+        else {
              // Fallback for truly unexpected errors
              userFriendlyMessage = "Failed to generate quiz due to an unexpected error. Please check the application logs.";
         }
