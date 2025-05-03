@@ -14,10 +14,10 @@ const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 const measurementId = process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID;
 
 
-if (typeof window !== 'undefined' && !apiKey) {
-    console.error("Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing. Firebase will not be initialized. Please check your .env.local file.");
+if (typeof window !== 'undefined' && (!apiKey || apiKey === "YOUR_API_KEY")) {
+    console.error("Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is still the placeholder value. Firebase will not be initialized. Please check your .env.local file and replace 'YOUR_API_KEY' with your actual key.");
     // Optionally, throw an error to halt execution if Firebase is critical
-    // throw new Error("Firebase API Key is missing.");
+    // throw new Error("Firebase API Key is missing or invalid.");
 }
 if (typeof window !== 'undefined' && !projectId) {
     console.error("Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing. Firebase will not be initialized properly. Please check your .env.local file.");
@@ -39,7 +39,8 @@ let app: FirebaseApp | null = null; // Initialize as null
 let auth: Auth | null = null; // Initialize as null
 let db: Firestore | null = null; // Initialize as null
 
-if (typeof window !== 'undefined' && apiKey && projectId) { // Only initialize if key and projectId exist
+// Only attempt initialization on the client-side AND if essential keys are present and not placeholders
+if (typeof window !== 'undefined' && apiKey && apiKey !== "YOUR_API_KEY" && projectId) {
     if (!getApps().length) {
         try {
             app = initializeApp(firebaseConfig);
@@ -71,7 +72,8 @@ if (typeof window !== 'undefined' && apiKey && projectId) { // Only initialize i
     }
 
 } else if (typeof window !== 'undefined') {
-     console.warn("Firebase not initialized due to missing configuration (API Key or Project ID).");
+     // This message will now show if API key is missing OR if it's the placeholder
+     console.warn("Firebase not initialized due to missing or placeholder configuration (API Key or Project ID). Please update .env.local.");
 } else {
     // Server-side or missing config: app, auth, db remain null
 }

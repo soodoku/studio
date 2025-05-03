@@ -44,6 +44,19 @@ export function AuthForm() {
     setLoading(true);
     const { email, password } = data;
 
+    // Ensure auth is initialized before attempting login/signup
+    if (!auth) {
+        console.error("Firebase Auth is not initialized. Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts");
+        toast({
+            variant: 'destructive',
+            title: 'Initialization Error',
+            description: 'Firebase connection failed. Please check configuration.',
+        });
+        setLoading(false);
+        return;
+    }
+
+
     try {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
@@ -61,6 +74,10 @@ export function AuthForm() {
       let errorMessage = 'An unexpected error occurred. Please try again.';
        // Firebase specific error handling
        switch (authError.code) {
+          case 'auth/api-key-not-valid':
+            errorMessage = 'Invalid Firebase API Key. Please check your .env.local file.';
+            console.error("Firebase Error: Invalid API Key. Ensure NEXT_PUBLIC_FIREBASE_API_KEY in .env.local is correct and the variable is prefixed with NEXT_PUBLIC_.");
+            break;
          case 'auth/user-not-found':
          case 'auth/wrong-password':
            errorMessage = 'Invalid email or password.';
@@ -78,7 +95,13 @@ export function AuthForm() {
             errorMessage = 'Network error. Please check your connection and try again.';
             break;
          default:
-            errorMessage = `Authentication failed: ${authError.message}`; // More generic fallback
+            // Check if it's the placeholder key causing the issue indirectly
+            if(process.env.NEXT_PUBLIC_FIREBASE_API_KEY === "YOUR_API_KEY") {
+                errorMessage = "Firebase API Key is set to the placeholder value. Please update .env.local with your actual key.";
+                 console.error("Firebase Error: API Key is still the placeholder 'YOUR_API_KEY'. Update .env.local.");
+            } else {
+                errorMessage = `Authentication failed: ${authError.message}`; // More generic fallback
+            }
             break;
        }
 
