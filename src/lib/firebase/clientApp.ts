@@ -22,16 +22,16 @@ if (typeof window !== 'undefined') {
         firebaseConfigValid = false; // Mark as invalid
     }
     if (!authDomain || authDomain === "YOUR_AUTH_DOMAIN") {
-        console.error("CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder. Update .env.local.");
+        console.error("CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder 'YOUR_AUTH_DOMAIN'. Update .env.local.");
         firebaseConfigValid = false;
     }
      if (!projectId || projectId === "YOUR_PROJECT_ID") {
-        console.error("CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder. Update .env.local.");
+        console.error("CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder 'YOUR_PROJECT_ID'. Update .env.local.");
         firebaseConfigValid = false;
     }
      // Add checks for other essential placeholders if needed, e.g., appId
     if (!appId || appId === "YOUR_APP_ID") {
-        console.error("CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder. Update .env.local.");
+        console.error("CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder 'YOUR_APP_ID'. Update .env.local.");
         firebaseConfigValid = false;
     }
 }
