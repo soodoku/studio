@@ -17,7 +17,8 @@ export default function RootLayout({
   const bodyClassName = `${GeistSans.className} antialiased`;
 
   return (
-    <html lang="en">
+    // Add suppressHydrationWarning to ignore browser extension attribute mismatches
+    <html lang="en" suppressHydrationWarning>
       <body className={bodyClassName}>
         {children}
         <Toaster />
