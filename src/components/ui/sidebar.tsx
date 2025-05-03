@@ -33,7 +33,7 @@ type SidebarContext = {
   setOpen: (open: boolean) => void
   openMobile: boolean
   setOpenMobile: (open: boolean) => void
-  isMobile: boolean
+  isMobile: boolean | undefined // Allow undefined during initial render
   toggleSidebar: () => void
 }
 
@@ -68,7 +68,7 @@ const SidebarProvider = React.forwardRef<
     },
     ref
   ) => {
-    const isMobile = useIsMobile();
+    const isMobile = useIsMobile(); // isMobile can be undefined initially
     const [openMobile, setOpenMobile] = React.useState(false);
 
     // Manage open state respecting controlled/uncontrolled logic and cookie persistence
@@ -128,9 +128,12 @@ const SidebarProvider = React.forwardRef<
 
     // Helper to toggle the sidebar.
     const toggleSidebar = React.useCallback(() => {
-      return isMobile
-        ? setOpenMobile((open) => !open)
-        : setOpen((open) => !open)
+      // Only toggle if isMobile is determined (not undefined)
+      if (isMobile === true) {
+         setOpenMobile((currentOpen) => !currentOpen)
+      } else if (isMobile === false) {
+         setOpen((currentOpen) => !currentOpen)
+      }
     }, [isMobile, setOpen, setOpenMobile])
 
     // Adds a keyboard shortcut to toggle the sidebar.
@@ -219,6 +222,19 @@ const Sidebar = React.forwardRef<
     ref
   ) => {
     const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+    const [mounted, setMounted] = React.useState(false);
+
+    React.useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    // Render null on the server and during initial client hydration before mount
+    if (!mounted) {
+      // Optionally render a placeholder/skeleton if preferred over null
+      // return <div className="w-0 md:w-[--sidebar-width] lg:w-[--sidebar-width-icon]" /> // Example placeholder
+       return null;
+    }
+
 
     if (collapsible === "none") {
       return (
@@ -255,6 +271,7 @@ const Sidebar = React.forwardRef<
       )
     }
 
+    // Desktop rendering (only happens after mount and if isMobile is false)
     return (
       <div
         ref={ref}
@@ -691,7 +708,7 @@ const SidebarMenuButton = React.forwardRef<
         <TooltipContent
           side="right"
           align="center"
-          hidden={state !== "collapsed" || isMobile}
+          hidden={state !== "collapsed" || isMobile === true} // Use isMobile explicitly true
           {...tooltipProps} // Spread tooltip content props
         />
       </Tooltip>
@@ -760,6 +777,7 @@ const SidebarMenuSkeleton = React.forwardRef<
     showIcon?: boolean
   }
 >(({ className, showIcon = false, ...props }, ref) => {
+    const { isMobile, state } = useSidebar(); // Get sidebar state
   // Random width between 50 to 90%.
   const width = React.useMemo(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`
@@ -775,8 +793,8 @@ const SidebarMenuSkeleton = React.forwardRef<
       {...props}
     >
       {(showIcon || // Always show icon if requested
-       // Or if in icon mode
-       React.useContext(SidebarContext)?.state === 'collapsed' && !React.useContext(SidebarContext)?.isMobile
+       // Or if in icon mode (collapsed state on desktop)
+       state === 'collapsed' && !isMobile
       ) && (
         <Skeleton
           className="size-4 rounded-md group-data-[collapsible=icon]:size-5" // Adjust icon size for icon mode
@@ -878,3 +896,4 @@ export {
   SidebarTrigger,
   useSidebar,
 }
+

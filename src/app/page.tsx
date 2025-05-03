@@ -11,13 +11,14 @@ import {
   SidebarFooter,
   SidebarTrigger,
   SidebarInset,
+  useSidebar // Import useSidebar hook
 } from '@/components/ui/sidebar';
 import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts'; // Removed isCurrentlySpeaking, isCurrentlyPaused imports
+import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
 import { generateQuizQuestions, type GenerateQuizQuestionsOutput } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
@@ -33,7 +34,11 @@ interface BookItem {
 type SummaryState = { loading: boolean; data: SummarizeAudiobookChapterOutput | null; error: string | null };
 type QuizState = { loading: boolean; data: GenerateQuizQuestionsOutput | null; error: string | null };
 
-export default function Home() {
+
+// Moved HomeContent outside to access useSidebar hook
+function HomeContent() {
+  const { isMobile } = useSidebar(); // Access isMobile state from context
+
   const [books, setBooks] = useState<BookItem[]>([]);
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -277,21 +282,27 @@ export default function Home() {
     };
   }, [viewMode]); // Stop speech if view changes (and potentially on unmount)
 
-   // REMOVED Polling useEffect for TTS state
 
+  // Don't render until mobile state is determined to avoid hydration issues
+  if (isMobile === undefined) {
+      return null; // Or a loading indicator
+  }
 
   return (
-    <SidebarProvider>
+    <>
       {/* Sidebar remains consistent */}
-      <Sidebar collapsible="icon">
+       <Sidebar collapsible="icon">
          <SidebarHeader className="items-center border-b border-sidebar-border">
            <div className="flex items-center gap-2">
               <Book className="h-6 w-6 text-primary" />
               <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
            </div>
-           <div className="ml-auto flex items-center gap-2 md:hidden">
-             <SidebarTrigger />
-           </div>
+            {/* Only show trigger on mobile */}
+           {isMobile && (
+              <div className="ml-auto">
+                <SidebarTrigger />
+              </div>
+           )}
          </SidebarHeader>
          <SidebarContent className="p-0">
              {/* Always show the library list in the sidebar */}
@@ -327,20 +338,23 @@ export default function Home() {
 
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
-         <header className="flex h-14 items-center gap-4 border-b bg-card px-6 md:hidden">
-            {/* Show back button in reader view on mobile, otherwise show sidebar trigger */}
-            {viewMode === 'reader' ? (
-                 <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
-                     <ArrowLeft className="h-5 w-5" />
-                 </Button>
-             ) : (
-                 <SidebarTrigger />
-             )}
-            <div className="flex items-center gap-2">
-               <Book className="h-6 w-6 text-primary" />
-               <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
-            </div>
-         </header>
+         {/* Show header only on mobile */}
+         {isMobile && (
+             <header className="flex h-14 items-center gap-4 border-b bg-card px-6">
+                {/* Show back button in reader view on mobile, otherwise show sidebar trigger */}
+                {viewMode === 'reader' ? (
+                     <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
+                         <ArrowLeft className="h-5 w-5" />
+                     </Button>
+                 ) : (
+                     <SidebarTrigger />
+                 )}
+                <div className="flex items-center gap-2">
+                   <Book className="h-6 w-6 text-primary" />
+                   <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
+                </div>
+             </header>
+         )}
         <main className="flex flex-1 flex-col items-stretch p-6 overflow-hidden">
           {/* Conditional Rendering based on viewMode */}
           {viewMode === 'library' && (
@@ -358,12 +372,14 @@ export default function Home() {
 
           {viewMode === 'reader' && selectedBook && (
             <div className="flex flex-1 flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full">
-               {/* Back Button (Desktop) */}
-                <div className="hidden md:flex absolute top-6 left-6 z-10">
-                     <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
-                         <ArrowLeft className="h-5 w-5" />
-                     </Button>
-                 </div>
+               {/* Back Button (Desktop) - Only show if NOT mobile */}
+                {!isMobile && (
+                    <div className="absolute top-6 left-6 z-10">
+                         <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
+                             <ArrowLeft className="h-5 w-5" />
+                         </Button>
+                     </div>
+                 )}
 
               {/* Book Content Area */}
               <Card className="flex flex-col flex-1 lg:w-2/3 shadow-md relative pt-10 md:pt-0"> {/* Add padding top for mobile header or button space */}
@@ -396,7 +412,6 @@ export default function Home() {
                   >
                     <Square className="h-5 w-5" />
                   </Button>
-                  {/* Removed Convert to Audio button as TTS starts on Play */}
                 </CardFooter>
               </Card>
 
@@ -481,6 +496,16 @@ export default function Home() {
           )}
         </main>
       </SidebarInset>
+    </>
+  );
+}
+
+
+// Wrap HomeContent with SidebarProvider
+export default function Home() {
+  return (
+    <SidebarProvider>
+      <HomeContent />
     </SidebarProvider>
   );
 }
