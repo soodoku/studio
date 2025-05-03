@@ -7,6 +7,7 @@
  * - generateQuizQuestions - A function that generates quiz questions.
  * - GenerateQuizQuestionsInput - The input type for the generateQuizQuestions function.
  * - GenerateQuizQuestionsOutput - The return type for the generateQuizQuestions function.
+ * - Question - The type definition for a single quiz question object.
  */
 
 import {ai} from '@/ai/ai-instance';
@@ -21,6 +22,9 @@ const QuestionSchema = z.object({
     message: "Answer must be one of the provided options.",
     path: ["answer"], // specify the path of the error
 });
+
+// Export the Question type derived from the schema
+export type Question = z.infer<typeof QuestionSchema>;
 
 
 const GenerateQuizQuestionsInputSchema = z.object({
@@ -125,12 +129,13 @@ const generateQuizQuestionsFlow = ai.defineFlow<
             throw new Error(`AI returned invalid quiz data: ${errorDetails}`);
         }
 
-        // Ensure the number of questions matches the request
+        // Ensure the number of questions matches the request (optional, can be handled by frontend if needed)
         if (validation.data.questions.length !== input.numQuestions) {
-             console.warn(`AI generated ${validation.data.questions.length} questions, but ${input.numQuestions} were requested.`);
+             console.warn(`AI generated ${validation.data.questions.length} questions, but ${input.numQuestions} were requested. Returning generated questions.`);
              // Decide how to handle this: return what was generated, or throw an error?
              // Let's return what was generated but maybe cap it or log a warning.
              // For now, just return the generated questions.
+             // You might want to adjust this logic based on strictness requirements.
         }
 
 
@@ -150,3 +155,5 @@ const generateQuizQuestionsFlow = ai.defineFlow<
   }
 );
 
+
+    

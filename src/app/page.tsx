@@ -13,14 +13,16 @@ import {
   SidebarInset,
   useSidebar // Import useSidebar hook
 } from '@/components/ui/sidebar';
-import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft } from 'lucide-react';
+import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Label } from "@/components/ui/label"
 import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
-import { generateQuizQuestions, type GenerateQuizQuestionsOutput } from '@/ai/flows/generate-quiz-questions';
+import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
 
 // Define a type for a book including its content
@@ -33,6 +35,7 @@ interface BookItem {
 // Define types for AI generated content
 type SummaryState = { loading: boolean; data: SummarizeAudiobookChapterOutput | null; error: string | null };
 type QuizState = { loading: boolean; data: GenerateQuizQuestionsOutput | null; error: string | null };
+type UserAnswers = { [questionIndex: number]: string };
 
 
 // Moved HomeContent outside to access useSidebar hook
@@ -46,6 +49,9 @@ function HomeContent() {
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
   const [viewMode, setViewMode] = useState<'library' | 'reader'>('library'); // 'library' or 'reader'
+  const [userAnswers, setUserAnswers] = useState<UserAnswers>({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [quizScore, setQuizScore] = useState<number | null>(null);
   const { toast } = useToast();
 
  const addBook = useCallback((fileName: string, textContent: string) => {
@@ -69,6 +75,10 @@ function HomeContent() {
           title: "Book Added",
           description: `${fileName} added to your library.`,
         });
+      // Update local storage after adding a book
+      if (typeof window !== 'undefined') {
+          localStorage.setItem('audiobook_buddy_books', JSON.stringify(updatedBooks));
+      }
       return updatedBooks;
     });
      // Stay in library view after adding
@@ -83,6 +93,22 @@ function HomeContent() {
         stopSpeech(); // Stop any ongoing speech only if TTS is available
      }
   }, [toast]);
+
+  // Load books from local storage on initial render
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+        const storedBooks = localStorage.getItem('audiobook_buddy_books');
+        if (storedBooks) {
+            try {
+                const parsedBooks: BookItem[] = JSON.parse(storedBooks);
+                setBooks(parsedBooks);
+            } catch (e) {
+                console.error("Failed to parse books from local storage:", e);
+                localStorage.removeItem('audiobook_buddy_books'); // Clear invalid data
+            }
+        }
+    }
+  }, []);
 
 
   const handleSelectBook = (book: BookItem) => {
@@ -99,6 +125,9 @@ function HomeContent() {
         setIsPausedState(false);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
+        setUserAnswers({});
+        setQuizSubmitted(false);
+        setQuizScore(null);
     }
   };
 
@@ -113,6 +142,9 @@ function HomeContent() {
      // Reset AI states when going back to library explicitly
      setSummaryState({ loading: false, data: null, error: null });
      setQuizState({ loading: false, data: null, error: null });
+     setUserAnswers({});
+     setQuizSubmitted(false);
+     setQuizScore(null);
   };
 
 
@@ -238,8 +270,16 @@ function HomeContent() {
     if (!selectedBook?.content) return;
 
     setQuizState({ loading: true, data: null, error: null });
+    setUserAnswers({}); // Reset answers
+    setQuizSubmitted(false); // Reset submission status
+    setQuizScore(null); // Reset score
     try {
-      const result = await generateQuizQuestions({ text: selectedBook.content, numQuestions: 5 }); // Generate 5 questions
+        // Define input for the flow
+        const input: GenerateQuizQuestionsInput = {
+            text: selectedBook.content,
+            numQuestions: 5 // Generate 5 questions
+        };
+      const result = await generateQuizQuestions(input); // Pass structured input
       setQuizState({ loading: false, data: result, error: null });
        toast({
          title: "Quiz Generated",
@@ -271,6 +311,34 @@ function HomeContent() {
     }
   };
 
+  // --- Quiz Interaction Handlers ---
+
+  const handleAnswerChange = (questionIndex: number, selectedOption: string) => {
+    setUserAnswers(prev => ({
+      ...prev,
+      [questionIndex]: selectedOption
+    }));
+  };
+
+  const handleQuizSubmit = () => {
+    if (!quizState.data) return;
+
+    let correctCount = 0;
+    quizState.data.questions.forEach((q, index) => {
+      if (userAnswers[index] === q.answer) {
+        correctCount++;
+      }
+    });
+
+    const score = (correctCount / quizState.data.questions.length) * 100;
+    setQuizScore(score);
+    setQuizSubmitted(true);
+
+    toast({
+      title: "Quiz Submitted",
+      description: `You scored ${score.toFixed(0)}% (${correctCount} out of ${quizState.data.questions.length}).`,
+    });
+  };
 
   // Effect to handle component unmount or view change
   useEffect(() => {
@@ -284,7 +352,13 @@ function HomeContent() {
 
 
   // Don't render until mobile state is determined to avoid hydration issues
-  if (isMobile === undefined) {
+  // Use state variable `mounted` to track client-side mount
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+      setMounted(true);
+  }, []);
+
+  if (!mounted || isMobile === undefined) {
       return null; // Or a loading indicator
   }
 
@@ -313,21 +387,23 @@ function HomeContent() {
                    Upload a file to start.
                  </div>
               ) : (
-                <ul className="space-y-1">
-                  {books.map((book) => (
-                    <li key={book.id}>
-                      <Button
-                        variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"} // Highlight only if selected AND in reader view
-                        className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
-                        onClick={() => handleSelectBook(book)}
-                        title={book.name} // Show full name on hover
-                      >
-                        <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                        <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+                <ScrollArea className="h-[calc(100vh-200px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height as needed */}
+                    <ul className="space-y-1 pr-4 group-data-[collapsible=icon]:pr-0">
+                      {books.map((book) => (
+                        <li key={book.id}>
+                          <Button
+                            variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"} // Highlight only if selected AND in reader view
+                            className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
+                            onClick={() => handleSelectBook(book)}
+                            title={book.name} // Show full name on hover
+                          >
+                            <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
+                            <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                </ScrollArea>
               )}
             </div>
          </SidebarContent>
@@ -460,17 +536,65 @@ function HomeContent() {
                         <AccordionContent>
                           {quizState.error && <p className="text-sm text-destructive">{quizState.error}</p>}
                           {quizState.data && quizState.data.questions.length > 0 && (
-                            <div className="space-y-4">
+                            <div className="space-y-6">
+                                {/* Display Score after submission */}
+                                {quizSubmitted && quizScore !== null && (
+                                  <div className="p-3 bg-muted rounded-md text-center">
+                                      <p className="text-lg font-semibold">Your Score: {quizScore.toFixed(0)}%</p>
+                                      <p className="text-sm text-muted-foreground">
+                                        ({(quizScore / 100 * quizState.data.questions.length).toFixed(0)} out of {quizState.data.questions.length} correct)
+                                      </p>
+                                  </div>
+                                )}
+
                               {quizState.data.questions.map((q, index) => (
-                                <div key={index} className="text-sm border-b pb-2 last:border-b-0">
-                                  <p className="font-medium mb-1">{index + 1}. {q.question}</p>
-                                  <ul className="list-disc list-inside pl-2 space-y-0.5">
-                                    {q.options.map((opt, i) => (
-                                      <li key={i}>{opt} {opt === q.answer && <span className="text-green-600 font-semibold">(Correct)</span>}</li>
-                                    ))}
-                                  </ul>
+                                <div key={index} className="text-sm border-b pb-4 last:border-b-0">
+                                  <p className="font-medium mb-2">{index + 1}. {q.question}</p>
+                                  <RadioGroup
+                                    value={userAnswers[index]}
+                                    onValueChange={(value) => handleAnswerChange(index, value)}
+                                    disabled={quizSubmitted} // Disable after submission
+                                    className="space-y-2"
+                                  >
+                                    {q.options.map((opt, i) => {
+                                        const isCorrect = opt === q.answer;
+                                        const isSelected = userAnswers[index] === opt;
+                                        const showResultStyle = quizSubmitted; // Only show styles after submit
+
+                                        return (
+                                            <div key={i} className={cn(
+                                                "flex items-center space-x-2 p-2 rounded-md transition-colors",
+                                                showResultStyle && isCorrect && "bg-green-100 dark:bg-green-900/50 border border-green-300 dark:border-green-700",
+                                                showResultStyle && !isCorrect && isSelected && "bg-red-100 dark:bg-red-900/50 border border-red-300 dark:border-red-700"
+
+                                            )}>
+                                                <RadioGroupItem value={opt} id={`q${index}-opt${i}`} />
+                                                <Label htmlFor={`q${index}-opt${i}`} className="flex-1 cursor-pointer">
+                                                    {opt}
+                                                </Label>
+                                                {showResultStyle && (
+                                                    isCorrect ? <Check className="h-4 w-4 text-green-600" />
+                                                    : isSelected ? <X className="h-4 w-4 text-red-600" /> : null
+                                                )}
+                                            </div>
+                                        );
+                                     })}
+                                  </RadioGroup>
                                 </div>
                               ))}
+
+                               {/* Submit/Regenerate Buttons */}
+                               {!quizSubmitted && (
+                                    <Button onClick={handleQuizSubmit} size="sm" className="w-full mt-4" disabled={quizState.loading || Object.keys(userAnswers).length !== quizState.data.questions.length}>
+                                        Submit Quiz
+                                    </Button>
+                                )}
+
+                                {quizSubmitted && (
+                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content}>
+                                        Generate New Quiz
+                                    </Button>
+                                )}
                             </div>
                           )}
                            {quizState.data && quizState.data.questions.length === 0 && !quizState.loading &&(
@@ -481,7 +605,8 @@ function HomeContent() {
                               Generate Quiz
                             </Button>
                           )}
-                           {quizState.data && !quizState.loading && (
+                           {/* Add Regenerate button when quiz exists but is not submitted yet */}
+                           {quizState.data && !quizSubmitted && !quizState.loading && (
                               <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content}>
                                 Regenerate Quiz
                               </Button>
@@ -509,3 +634,5 @@ export default function Home() {
     </SidebarProvider>
   );
 }
+
+    
