@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -19,7 +20,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
 } from '@/components/ui/sidebar';
-import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn, Headphones } from 'lucide-react'; // Added Headphones icon
+import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn, Headphones, AudioLines } from 'lucide-react'; // Added Headphones, AudioLines icons
 import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -42,12 +43,15 @@ interface BookItem {
   name: string;
   content: string; // Full text content
   createdAt: Date; // Timestamp for ordering
+  audioFileName?: string; // Optional: Store the name/path of the generated audio file
 }
 
 // Define types for AI generated content
 type SummaryState = { loading: boolean; data: SummarizeAudiobookChapterOutput | null; error: string | null };
 type QuizState = { loading: boolean; data: GenerateQuizQuestionsOutput | null; error: string | null };
 type UserAnswers = { [questionIndex: number]: string };
+type AudioGenerationState = { loading: boolean; error: string | null; audioUrl?: string | null };
+
 
 // Moved HomeContent outside to access useSidebar and useAuth hooks
 function HomeContent() {
@@ -62,6 +66,7 @@ function HomeContent() {
   const [isPausedState, setIsPausedState] = useState(false);
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
+  const [audioState, setAudioState] = useState<AudioGenerationState>({ loading: false, error: null, audioUrl: null });
   const [viewMode, setViewMode] = useState<'library' | 'reader'>('library'); // 'library' or 'reader'
   const [userAnswers, setUserAnswers] = useState<UserAnswers>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
@@ -79,16 +84,9 @@ function HomeContent() {
 
    // Fetch books from Firestore for the logged-in user
    useEffect(() => {
-    if (user) {
+    if (user && db) { // Ensure user and db are available
       setBooksLoading(true); // Start loading books
       const booksCollection = collection(db, 'books');
-      // Ensure Firestore instance 'db' is valid before querying
-      if (!db) {
-         console.error("Firestore instance (db) is not available. Cannot fetch books.");
-         toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database." });
-         setBooksLoading(false);
-         return;
-      }
       const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc')); // Order by creation time
 
       // Use onSnapshot for real-time updates
@@ -99,6 +97,7 @@ function HomeContent() {
           name: doc.data().name,
           content: doc.data().content,
           createdAt: doc.data().createdAt.toDate(), // Convert Firestore Timestamp to Date
+          audioFileName: doc.data().audioFileName, // Fetch audio file name
         })) as BookItem[];
         setBooks(userBooks);
         setBooksLoading(false); // Finish loading books
@@ -111,11 +110,17 @@ function HomeContent() {
 
       // Cleanup listener on unmount or user change
       return () => unsubscribe();
-    } else {
+    } else if (!db && user) {
+        // Handle case where user is loaded but db failed init
+        console.error("Firestore instance (db) is not available. Cannot fetch books.");
+        toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database to fetch books." });
+        setBooksLoading(false);
+    }
+    else {
       setBooks([]); // Clear books if no user
       setBooksLoading(false); // Not loading if no user
     }
-  }, [user, toast]); // Rerun when user changes
+  }, [user, toast]); // Rerun when user or db changes
 
 
    const addBook = useCallback(async (fileName: string, textContent: string) => {
@@ -147,6 +152,7 @@ function HomeContent() {
                 name: fileName,
                 content: textContent,
                 createdAt: new Date(), // Use JS Date, Firestore converts it
+                audioFileName: null, // Initialize audio field
             };
             const docRef = await addDoc(booksCollection, newBookData);
             console.log("Book added with ID: ", docRef.id);
@@ -154,14 +160,7 @@ function HomeContent() {
                 title: "Book Added",
                 description: `${fileName} added to your library.`,
             });
-            // No need to manually update state, onSnapshot will handle it
-            // setViewMode('library'); // Stay in library view -- Removed, let user stay if they were in reader
-            // Reset player state if a book was playing irrelevant to the added book
-            if (isPlaying || isPausedState) {
-                stopSpeech();
-                setIsPlaying(false);
-                setIsPausedState(false);
-            }
+            // onSnapshot will handle updating the state, no manual update needed
         } catch (e) {
             console.error("Error adding document: ", e);
             toast({
@@ -170,7 +169,8 @@ function HomeContent() {
                 description: "Could not save the book to your library.",
             });
         }
-    }, [user, books, isPlaying, isPausedState, toast]); // Include books in dependencies for duplicate check
+    }, [user, books, toast]); // Removed isPlaying, isPausedState as adding a book shouldn't stop unrelated playback
+
 
     const deleteBook = async (bookId: string, bookName: string) => {
         if (!user || !db) return; // Should not happen if button is shown correctly, also check db
@@ -187,6 +187,7 @@ function HomeContent() {
                 description: `"${bookName}" removed from your library.`,
             });
             // onSnapshot will update the local state
+            // TODO: Delete associated audio file from storage if implemented
         } catch (error) {
             console.error("Error deleting book:", error);
             toast({
@@ -208,6 +209,7 @@ function HomeContent() {
         setIsPausedState(false);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
+        setAudioState({ loading: false, error: null, audioUrl: null }); // Reset audio state
         setUserAnswers({});
         setQuizSubmitted(false);
         setQuizScore(null);
@@ -224,9 +226,10 @@ function HomeContent() {
     setViewMode('library'); // Switch back to library view
      setIsPlaying(false);
      setIsPausedState(false);
-     // Reset AI states when going back to library explicitly
+     // Reset AI and audio states when going back to library explicitly
      setSummaryState({ loading: false, data: null, error: null });
      setQuizState({ loading: false, data: null, error: null });
+     setAudioState({ loading: false, error: null, audioUrl: null });
      setUserAnswers({});
      setQuizSubmitted(false);
      setQuizScore(null);
@@ -248,8 +251,6 @@ function HomeContent() {
     if (isPausedState) {
       resumeSpeech();
       // State update handled by onResume listener in tts.ts
-      // setIsPlaying(true); // Let callback handle this
-      // setIsPausedState(false);
     } else if (!isPlaying) {
        // Start speaking
        speakText(
@@ -292,8 +293,6 @@ function HomeContent() {
     if (isPlaying && typeof window !== 'undefined' && window.speechSynthesis) {
       pauseSpeech();
       // State update relies on onPause listener in tts.ts
-       // setIsPlaying(false); // Let callback handle this
-       // setIsPausedState(true);
     }
   };
 
@@ -301,8 +300,6 @@ function HomeContent() {
      if (typeof window !== 'undefined' && window.speechSynthesis) {
         stopSpeech();
         // State update relies on onEnd listener triggered by cancel()
-        // setIsPlaying(false); // Let callback handle this
-        // setIsPausedState(false);
      }
   };
 
@@ -310,6 +307,10 @@ function HomeContent() {
 
  const handleSummarize = async () => {
     if (!selectedBook?.content) return;
+    if (!ai) {
+        toast({ variant: "destructive", title: "AI Error", description: "AI service not initialized. Check API Key." });
+        return;
+    }
 
     setSummaryState({ loading: true, data: null, error: null });
     try {
@@ -324,13 +325,12 @@ function HomeContent() {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       let userFriendlyMessage = `Failed to generate summary. ${errorMessage}`;
 
-      // Provide more specific hints for common issues (already handled in summarize flow)
-       // Check if the server provided a more specific message
-      if (errorMessage.includes('API key not valid') || errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error') || errorMessage.includes('Invalid input')) {
+      // Check if the server provided a more specific message
+      if (errorMessage.includes('API key not valid') || errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error') || errorMessage.includes('Invalid input') || errorMessage.includes('Billing account not configured')) {
           userFriendlyMessage = errorMessage; // Use the specific error from the server
       } else {
-          // Generic fallback if the server error wasn't specific enough or it was a client-side issue
-          userFriendlyMessage = "Failed to generate summary due to an unexpected error. Please check the console for details.";
+          // Generic fallback
+          userFriendlyMessage = "Failed to generate summary due to an unexpected error. Please check the console or Genkit server logs for details.";
       }
 
 
@@ -346,6 +346,10 @@ function HomeContent() {
 
   const handleGenerateQuiz = async () => {
     if (!selectedBook?.content) return;
+     if (!ai) {
+        toast({ variant: "destructive", title: "AI Error", description: "AI service not initialized. Check API Key." });
+        return;
+    }
 
     setQuizState({ loading: true, data: null, error: null });
     setUserAnswers({}); // Reset answers
@@ -375,18 +379,16 @@ function HomeContent() {
             errorMessage.includes('invalid quiz data format') ||
             errorMessage.includes('Network error:') ||
             errorMessage.includes('rate limit exceeded') ||
-            errorMessage.includes('Invalid input')) {
+            errorMessage.includes('Invalid input') ||
+            errorMessage.includes('Billing account not configured')) {
             userFriendlyMessage = errorMessage; // Use the specific error message from the flow
         } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('server error') || errorMessage.includes('network error')) {
-             // More generic network/server error if specific details aren't available
              userFriendlyMessage = "Failed to generate quiz: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
         } else if (error?.digest) {
-             // If there's a digest, mention it for server-side debugging
              userFriendlyMessage = `Failed to generate quiz due to a server component error (Digest: ${error.digest}). Check server logs for details.`;
              console.error("Server Component Error Digest:", error.digest);
         }
         else {
-             // Fallback for truly unexpected errors
              userFriendlyMessage = "Failed to generate quiz due to an unexpected error. Please check the application logs.";
         }
 
@@ -399,6 +401,78 @@ function HomeContent() {
       });
     }
   };
+
+ // --- Audio Generation Handler ---
+const handleGenerateAudio = async () => {
+    if (!selectedBook?.content || !selectedBook.id || !user) return;
+     // Basic check if TTS is supported, although we're not directly using speakText here
+     if (typeof window === 'undefined' || !window.speechSynthesis) {
+         toast({ variant: "destructive", title: "TTS Not Supported", description: "Audio generation relies on browser features that may not be fully supported." });
+         return;
+     }
+
+    setAudioState({ loading: true, error: null, audioUrl: null });
+    toast({ title: "Starting Audio Generation", description: "Preparing audio file..." });
+
+    try {
+        // Placeholder for actual audio file generation and storage
+        // In a real app, this would involve:
+        // 1. Calling a server-side function/API endpoint.
+        // 2. The server using a TTS service (like Google Cloud Text-to-Speech, not browser's SpeechSynthesis) to generate an MP3/WAV.
+        // 3. Uploading the generated audio file to Firebase Storage (or similar).
+        // 4. Storing the file reference (URL or path) in the Firestore document for the book.
+        // 5. Returning the file URL/path to the client.
+
+        console.log(`Simulating audio generation for book ID: ${selectedBook.id}`);
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Simulate network delay + generation time
+
+        const generatedAudioFileName = `${selectedBook.id}_audio.mp3`; // Example file name
+
+        // Update Firestore - this would happen on the server in reality after file upload
+        if (db) {
+            const bookRef = doc(db, "books", selectedBook.id);
+            // In a real scenario, you'd use updateDoc from the server/cloud function
+            // await updateDoc(bookRef, { audioFileName: generatedAudioFileName }); // Example
+            console.log(`Firestore update simulation: Set audioFileName to ${generatedAudioFileName} for book ${selectedBook.id}`);
+             // Since we can't directly update from client rule restrictions, we just log
+             // The onSnapshot listener *should* pick up changes if they were made server-side.
+             // For this simulation, we'll manually update the local state to reflect the change.
+             setBooks(prevBooks =>
+                 prevBooks.map(book =>
+                     book.id === selectedBook.id
+                         ? { ...book, audioFileName: generatedAudioFileName }
+                         : book
+                 )
+             );
+              setSelectedBook(prevSelected => prevSelected ? { ...prevSelected, audioFileName: generatedAudioFileName } : null);
+
+        } else {
+             throw new Error("Firestore database connection not available.");
+        }
+
+
+        // Simulate getting a downloadable URL (in reality, from Firebase Storage)
+        const simulatedAudioUrl = `/placeholder-audio/${generatedAudioFileName}`; // This won't actually play
+        console.log(`Simulated audio URL: ${simulatedAudioUrl}`);
+
+        setAudioState({ loading: false, error: null, audioUrl: simulatedAudioUrl });
+        toast({
+            title: "Audio Generated (Simulation)",
+            description: `Audio file "${generatedAudioFileName}" is ready (simulated).`,
+        });
+
+    } catch (error) {
+        console.error("Error generating audio (client-side simulation):", error);
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during audio generation simulation.";
+        setAudioState({ loading: false, error: errorMessage, audioUrl: null });
+        toast({
+            variant: "destructive",
+            title: "Audio Generation Failed",
+            description: errorMessage,
+        });
+    }
+};
+
 
   // --- Quiz Interaction Handlers ---
 
@@ -432,7 +506,6 @@ function HomeContent() {
   // --- Logout Handler ---
   const handleLogout = async () => {
     try {
-        // Ensure auth instance is valid before signing out
         if (!auth) {
             console.error("Logout failed: Auth instance is not available.");
             toast({ variant: 'destructive', title: 'Logout Failed', description: 'Authentication service unavailable.' });
@@ -440,18 +513,21 @@ function HomeContent() {
         }
         await signOut(auth);
         toast({ title: 'Logged Out', description: 'You have been logged out successfully.' });
-        // AuthProvider will handle redirect via the useEffect hook
-        setSelectedBook(null); // Clear selected book on logout
-        setViewMode('library'); // Go to library view
-        // Clear other states if necessary
+        // AuthProvider should redirect, but clear local state just in case
+        setSelectedBook(null);
+        setViewMode('library');
         setBooks([]);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
+        setAudioState({ loading: false, error: null, audioUrl: null });
         setUserAnswers({});
         setQuizSubmitted(false);
         setQuizScore(null);
         setIsPlaying(false);
         setIsPausedState(false);
+         if (typeof window !== 'undefined' && window.speechSynthesis) {
+             stopSpeech(); // Ensure speech stops on logout
+         }
     } catch (error) {
         console.error("Logout failed:", error);
         toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out. Please try again.' });
@@ -475,8 +551,8 @@ function HomeContent() {
 
 
   // Show loading indicator while auth is loading or user is null (before redirect)
-  if (authLoading || !user) {
-      // You can return a full-page loader here if preferred
+  // Also show loading if db init failed while auth check is still processing
+  if (authLoading || !user || (user && !db && booksLoading)) {
       return (
            <div className="flex items-center justify-center min-h-screen">
                <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -486,7 +562,6 @@ function HomeContent() {
 
   // Don't render the main UI until mounted to avoid hydration mismatches related to isMobile
   if (!mounted || isMobile === undefined) {
-     // Or a loading indicator matching the theme
      return (
           <div className="flex items-center justify-center min-h-screen">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -501,10 +576,9 @@ function HomeContent() {
        <Sidebar collapsible="icon">
          <SidebarHeader className="items-center border-b border-sidebar-border">
            <div className="flex items-center gap-2">
-              <Book className="h-6 w-6 text-primary" />
+              <AudioLines className="h-6 w-6 text-primary" /> {/* Changed icon */}
               <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
            </div>
-            {/* Only show trigger on mobile */}
            {mounted && isMobile && (
               <div className="ml-auto">
                 <SidebarTrigger />
@@ -512,12 +586,10 @@ function HomeContent() {
            )}
          </SidebarHeader>
          <SidebarContent className="p-0 flex flex-col">
-             {/* Bookshelf */}
              <div className="p-4 flex-grow overflow-hidden">
-                 <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Bookshelf</p>
+                 <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Library</p>
                   {booksLoading ? (
                     <div className="mt-4 space-y-2 group-data-[collapsible=icon]:hidden">
-                         {/* Skeleton Loader for books */}
                          {[...Array(3)].map((_, i) => (
                              <div key={i} className="flex items-center space-x-2 p-2 rounded bg-muted/50 animate-pulse">
                                  <Book className="h-4 w-4 text-muted-foreground/50" />
@@ -527,7 +599,7 @@ function HomeContent() {
                     </div>
                   ) : books.length === 0 ? (
                       <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
-                         Upload a file to start.
+                         Upload a PDF file to start.
                       </div>
                   ) : (
                       <ScrollArea className="h-[calc(100vh-280px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height */}
@@ -536,15 +608,20 @@ function HomeContent() {
                             <li key={book.id} className="group/book-item relative">
                               <Button
                                 variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"}
-                                className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
+                                className={cn(
+                                    `w-full justify-start text-left h-auto py-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`,
+                                    selectedBook?.id === book.id && viewMode === 'reader' && 'font-semibold'
+                                )}
                                 onClick={() => handleSelectBook(book)}
                                 title={book.name} // Show full name on hover
                               >
                                 <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                                <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
+                                <span className="truncate flex-grow ml-1 group-data-[collapsible=icon]:hidden">{book.name}</span>
+                                {book.audioFileName && ( // Show audio icon if audio exists
+                                     <Headphones className="h-3 w-3 ml-auto text-muted-foreground flex-shrink-0 group-data-[collapsible=icon]:hidden" title="Audio available"/>
+                                )}
                               </Button>
-                               {/* Delete Button - Show on hover (desktop) or always (mobile, if needed) */}
-                                <AlertDialog>
+                               <AlertDialog>
                                     <AlertDialogTrigger asChild>
                                         <Button
                                             variant="ghost"
@@ -559,7 +636,7 @@ function HomeContent() {
                                         <AlertDialogHeader>
                                         <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                         <AlertDialogDescription>
-                                            This action cannot be undone. This will permanently delete "{book.name}" from your library.
+                                            This action cannot be undone. This will permanently delete "{book.name}" {book.audioFileName ? 'and its audio file ' : ''}from your library.
                                         </AlertDialogDescription>
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
@@ -578,21 +655,14 @@ function HomeContent() {
                   )}
             </div>
 
-             {/* File Upload - Moved below bookshelf */}
              <div className="border-t border-sidebar-border p-4 mt-auto group-data-[collapsible=icon]:p-2">
                 <FileUpload onUploadSuccess={addBook} />
             </div>
 
-              {/* User Info & Logout */}
              <div className="border-t border-sidebar-border p-4 group-data-[collapsible=icon]:p-2">
                  <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-                     {/* Placeholder for Avatar - can add later */}
-                     {/* <Avatar className="h-8 w-8 group-data-[collapsible=icon]:h-6 group-data-[collapsible=icon]:w-6">
-                         <AvatarFallback>{user?.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
-                     </Avatar> */}
                      <div className="flex-grow truncate group-data-[collapsible=icon]:hidden">
                         <p className="text-sm font-medium text-foreground truncate" title={user?.email || 'User'}>{user?.email || 'User'}</p>
-                        {/* <p className="text-xs text-muted-foreground">User ID: {user?.uid}</p> */}
                     </div>
                      <Button
                         variant="ghost"
@@ -606,14 +676,10 @@ function HomeContent() {
                  </div>
              </div>
          </SidebarContent>
-         {/* <SidebarFooter className="border-t border-sidebar-border p-4">
-            <FileUpload onUploadSuccess={addBook} />
-         </SidebarFooter> */}
        </Sidebar>
 
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
-         {/* Mobile Header */}
          {mounted && isMobile && (
              <header className="flex h-14 items-center gap-4 border-b bg-card px-4 sticky top-0 z-10">
                 {viewMode === 'reader' ? (
@@ -624,12 +690,11 @@ function HomeContent() {
                       mounted && <SidebarTrigger /> // Only show trigger if mounted
                  )}
                 <div className="flex items-center gap-2 flex-grow justify-center">
-                   <Book className="h-6 w-6 text-primary" />
+                   <AudioLines className="h-6 w-6 text-primary" /> {/* Changed icon */}
                    <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
                 </div>
-                 {/* Add a spacer or adjust layout if Logout needs to be here */}
                   <div className="w-8"> {/* Placeholder for alignment if needed */}
-                      {!user && ( // Show login icon if no user (shouldn't happen due to redirect, but for safety)
+                      {!user && (
                           <Button variant="ghost" size="icon" onClick={() => router.push('/auth')} title="Login">
                              <LogIn className="h-5 w-5" />
                           </Button>
@@ -642,14 +707,14 @@ function HomeContent() {
           {/* Conditional Rendering based on viewMode */}
           {viewMode === 'library' && (
              <div className="flex flex-1 flex-col items-center justify-center text-center">
-                <Book size={48} className="text-muted-foreground mb-4" />
+                 <AudioLines size={48} className="text-muted-foreground mb-4" /> {/* Changed icon */}
                 <h2 className="text-2xl font-semibold mb-2">Welcome, {user?.email || 'User'}!</h2>
                 <p className="text-muted-foreground mb-6 max-w-md">
                   {books.length > 0
-                    ? "Select a book from your bookshelf to start reading and get AI insights."
-                    : "Upload a PDF or ePUB file using the button in the sidebar to begin."}
+                    ? "Select a book from your library to start reading and listening."
+                    : "Upload a PDF file using the button in the sidebar to begin."}
                 </p>
-                 {books.length === 0 && !booksLoading && ( // Show upload hint if library is empty and not loading
+                 {books.length === 0 && !booksLoading && (
                      <p className="text-sm text-primary animate-pulse">Use the 'Upload File' button in the sidebar.</p>
                  )}
              </div>
@@ -657,7 +722,6 @@ function HomeContent() {
 
           {viewMode === 'reader' && selectedBook && (
             <div className="flex flex-1 flex-col lg:flex-row gap-4 md:gap-6 max-w-7xl mx-auto w-full overflow-hidden">
-               {/* Back Button (Desktop) */}
                 {mounted && !isMobile && (
                     <div className="absolute top-4 left-4 md:top-6 md:left-6 z-20">
                          <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
@@ -676,11 +740,6 @@ function HomeContent() {
                       {selectedBook.content || "No content available."}
                     </p>
                 </CardContent>
-                 {/* Removed TTS controls from CardFooter */}
-                 {/* <CardFooter className="border-t p-4 flex items-center justify-center gap-4 bg-muted/50 sticky bottom-0 z-10">
-                   <Button ... />
-                   <Button ... />
-                 </CardFooter> */}
               </Card>
 
               {/* AI Features & Audio Area */}
@@ -690,13 +749,13 @@ function HomeContent() {
                 </CardHeader>
                 <CardContent className="flex-1 p-4 overflow-auto"> {/* Changed overflow-hidden to overflow-auto */}
                     <Accordion type="single" collapsible className="w-full" defaultValue="audio"> {/* Default to audio open */}
-                      {/* Audio Playback Section */}
+
+                      {/* Audio Playback Section (Browser TTS) */}
                       <AccordionItem value="audio">
                           <AccordionTrigger>
                             <div className="flex items-center gap-2 w-full">
                                 <Headphones className="h-5 w-5 flex-shrink-0" />
-                                <span className="flex-grow text-left">Audio Playback</span>
-                                {/* Optionally add a spinner if audio generation was a long process */}
+                                <span className="flex-grow text-left">Listen (Browser TTS)</span>
                             </div>
                           </AccordionTrigger>
                           <AccordionContent>
@@ -705,7 +764,7 @@ function HomeContent() {
                                       onClick={isPlaying ? handlePause : handlePlay}
                                       size="icon"
                                       variant="outline"
-                                      disabled={!selectedBook?.content || (!isPlaying && !isPausedState && window.speechSynthesis?.speaking)} // Disable if no content or browser is already speaking unrelatedly
+                                      disabled={!selectedBook?.content || (!isPlaying && !isPausedState && typeof window !== 'undefined' && window.speechSynthesis?.speaking)}
                                       aria-label={isPlaying ? "Pause" : "Play"}
                                   >
                                       {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
@@ -714,18 +773,51 @@ function HomeContent() {
                                       onClick={handleStop}
                                       size="icon"
                                       variant="outline"
-                                      disabled={!isPlaying && !isPausedState} // Disable if not playing or paused
+                                      disabled={!isPlaying && !isPausedState}
                                       aria-label="Stop"
                                   >
                                       <Square className="h-5 w-5" />
                                   </Button>
                               </div>
                                {!selectedBook?.content && <p className="text-sm text-muted-foreground text-center">No content loaded for playback.</p>}
-                               {/* Error message specifically for TTS */}
                                { typeof window !== 'undefined' && !window.speechSynthesis && (
                                    <p className="text-sm text-destructive text-center mt-2">Text-to-Speech is not supported by your browser.</p>
                                )}
                           </AccordionContent>
+                      </AccordionItem>
+
+                      {/* Audio Generation Section */}
+                      <AccordionItem value="generate-audio">
+                        <AccordionTrigger>
+                           <div className="flex items-center gap-2 w-full">
+                             <AudioLines className="h-5 w-5 flex-shrink-0" />
+                             <span className="flex-grow text-left">Generate Audio File</span>
+                              {audioState.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />}
+                           </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                           {audioState.error && <p className="text-sm text-destructive break-words">{audioState.error}</p>}
+                           {selectedBook.audioFileName && !audioState.loading && (
+                                <div className="text-sm text-center py-2">
+                                    <p>Audio file available:</p>
+                                    <p className="font-mono text-xs text-muted-foreground break-all">{selectedBook.audioFileName}</p>
+                                    {/* Placeholder for actual player or download link */}
+                                    {/* <audio controls src={audioState.audioUrl || '#'} className="w-full mt-2" /> */}
+                                    <p className="text-xs text-muted-foreground mt-1">(Audio playback/download not yet implemented)</p>
+                                </div>
+                           )}
+                           {!audioState.loading && ( // Show button if not loading
+                             <Button
+                               onClick={handleGenerateAudio}
+                               size="sm"
+                               className="w-full mt-2"
+                               disabled={!selectedBook?.content || audioState.loading} // Disable if no content or already loading
+                             >
+                               {selectedBook.audioFileName ? 'Regenerate Audio File' : 'Generate Audio File'}
+                             </Button>
+                           )}
+                            <p className="text-xs text-muted-foreground mt-2 text-center">Note: This generates an audio file (simulation). Use "Listen" for instant browser playback.</p>
+                        </AccordionContent>
                       </AccordionItem>
 
 
@@ -742,15 +834,16 @@ function HomeContent() {
                           {summaryState.error && <p className="text-sm text-destructive">{summaryState.error}</p>}
                           {summaryState.data && <p className="text-sm">{summaryState.data.summary}</p>}
                           {!summaryState.loading && !summaryState.data && !summaryState.error && (
-                            <Button onClick={handleSummarize} size="sm" className="w-full" disabled={!selectedBook?.content}>
+                            <Button onClick={handleSummarize} size="sm" className="w-full" disabled={!selectedBook?.content || !ai}>
                               Generate Summary
                             </Button>
                           )}
                            {summaryState.data && !summaryState.loading && (
-                              <Button onClick={handleSummarize} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content}>
+                              <Button onClick={handleSummarize} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !ai}>
                                 Regenerate Summary
                               </Button>
                             )}
+                            {!ai && <p className="text-xs text-destructive mt-2 text-center">AI Service Unavailable (Check API Key)</p>}
                         </AccordionContent>
                       </AccordionItem>
 
@@ -764,10 +857,9 @@ function HomeContent() {
                           </div>
                         </AccordionTrigger>
                         <AccordionContent>
-                          {quizState.error && <p className="text-sm text-destructive break-words">{quizState.error}</p>} {/* Added break-words */}
+                          {quizState.error && <p className="text-sm text-destructive break-words">{quizState.error}</p>}
                           {quizState.data && quizState.data.questions.length > 0 && (
                             <div className="space-y-6">
-                                {/* Display Score after submission */}
                                 {quizSubmitted && quizScore !== null && (
                                   <div className="p-3 bg-muted rounded-md text-center">
                                       <p className="text-lg font-semibold">Your Score: {quizScore.toFixed(0)}%</p>
@@ -783,13 +875,13 @@ function HomeContent() {
                                   <RadioGroup
                                     value={userAnswers[index]}
                                     onValueChange={(value) => handleAnswerChange(index, value)}
-                                    disabled={quizSubmitted} // Disable after submission
+                                    disabled={quizSubmitted}
                                     className="space-y-2"
                                   >
                                     {q.options.map((opt, i) => {
                                         const isCorrect = opt === q.answer;
                                         const isSelected = userAnswers[index] === opt;
-                                        const showResultStyle = quizSubmitted; // Only show styles after submit
+                                        const showResultStyle = quizSubmitted;
 
                                         return (
                                             <div key={i} className={cn(
@@ -813,7 +905,6 @@ function HomeContent() {
                                 </div>
                               ))}
 
-                               {/* Submit/Regenerate Buttons */}
                                {!quizSubmitted && (
                                     <Button onClick={handleQuizSubmit} size="sm" className="w-full mt-4" disabled={quizState.loading || Object.keys(userAnswers).length !== quizState.data.questions.length}>
                                         Submit Quiz
@@ -821,7 +912,7 @@ function HomeContent() {
                                 )}
 
                                 {quizSubmitted && (
-                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content}>
+                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content || !ai}>
                                         Generate New Quiz
                                     </Button>
                                 )}
@@ -831,20 +922,19 @@ function HomeContent() {
                                <p className="text-sm text-muted-foreground">No quiz questions generated.</p>
                            )}
                           {!quizState.loading && !quizState.data && !quizState.error && (
-                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.content}>
+                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.content || !ai}>
                               Generate Quiz
                             </Button>
                           )}
-                           {/* Add Regenerate button when quiz exists but is not submitted yet */}
                            {quizState.data && !quizSubmitted && !quizState.loading && (
-                              <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content}>
+                              <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !ai}>
                                 Regenerate Quiz
                               </Button>
                             )}
+                             {!ai && <p className="text-xs text-destructive mt-2 text-center">AI Service Unavailable (Check API Key)</p>}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
-                  {/* </ScrollArea> */}
                 </CardContent>
               </Card>
             </div>
@@ -856,13 +946,18 @@ function HomeContent() {
 }
 
 
-// Wrap HomeContent with SidebarProvider and AuthProvider
+// Import AI instance check
+import { ai } from '@/ai/ai-instance';
+
+// Wrap HomeContent with Providers
 export default function Home() {
   return (
-      <AuthProvider>
+      <AuthProvider> {/* AuthProvider should wrap everything */}
           <SidebarProvider>
               <HomeContent />
           </SidebarProvider>
       </AuthProvider>
   );
 }
+
+    
