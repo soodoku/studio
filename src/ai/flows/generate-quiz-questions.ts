@@ -60,6 +60,7 @@ export async function generateQuizQuestions(
    const validationResult = GenerateQuizQuestionsInputSchema.safeParse(input);
    if (!validationResult.success) {
       const issues = validationResult.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join(', ');
+      console.error("Quiz Generation Input Validation Error:", issues); // Log validation errors
       throw new Error(`Invalid input for quiz generation: ${issues}`);
    }
   return generateQuizQuestionsFlow(validationResult.data);
@@ -85,22 +86,23 @@ Constraints for each question:
 4.  The correct answer MUST be listed within the 4 options.
 5.  Options should be plausible but clearly distinguishable based on the text.
 
-Output ONLY a valid JSON array containing the question objects. Each object must have the keys 'question' (string), 'options' (array of 4 strings), and 'answer' (string, matching one of the options).
-
-Example JSON structure:
-[
-  {
-    "question": "...",
-    "options": ["...", "...", "...", "..."],
-    "answer": "..."
-  },
-  {
-    "question": "...",
-    "options": ["...", "...", "...", "..."],
-    "answer": "..."
-  }
-]
-`,
+Output ONLY a valid JSON object matching this structure:
+{
+  "questions": [
+    {
+      "question": "...",
+      "options": ["...", "...", "...", "..."],
+      "answer": "..."
+    },
+    {
+      "question": "...",
+      "options": ["...", "...", "...", "..."],
+      "answer": "..."
+    }
+    // ... more questions
+  ]
+}
+`, // Updated example to match schema
 });
 
 const generateQuizQuestionsFlow = ai.defineFlow<
@@ -113,47 +115,65 @@ const generateQuizQuestionsFlow = ai.defineFlow<
     outputSchema: GenerateQuizQuestionsOutputSchema,
   },
   async (input): Promise<GenerateQuizQuestionsOutput> => {
+      console.log("Generating quiz questions for input:", input.text.substring(0, 50) + "..."); // Log start and partial input
       let response: GenerateResponse | undefined;
       try {
         response = await prompt(input);
+        console.log("AI response received:", response); // Log the raw response object
 
         const output = response?.output; // Access output property directly
+
+         if (!output) {
+             console.error('AI response is missing output object (generateQuizQuestionsFlow). Response:', response);
+             throw new Error('AI response did not contain an output object.');
+         }
+
 
         // Validate the structure and content of the output
         const validation = GenerateQuizQuestionsOutputSchema.safeParse(output);
 
         if (!validation.success) {
             console.error('Invalid output structure from AI (generateQuizQuestionsFlow):', validation.error.issues);
+            console.error('Raw AI Output causing validation error:', JSON.stringify(output, null, 2)); // Log raw output for debugging
              // Try to provide more specific feedback if possible
              const errorDetails = validation.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-            throw new Error(`AI returned invalid quiz data: ${errorDetails}`);
+            throw new Error(`AI returned invalid quiz data format. Details: ${errorDetails}`);
         }
 
         // Ensure the number of questions matches the request (optional, can be handled by frontend if needed)
         if (validation.data.questions.length !== input.numQuestions) {
-             console.warn(`AI generated ${validation.data.questions.length} questions, but ${input.numQuestions} were requested. Returning generated questions.`);
-             // Decide how to handle this: return what was generated, or throw an error?
-             // Let's return what was generated but maybe cap it or log a warning.
-             // For now, just return the generated questions.
-             // You might want to adjust this logic based on strictness requirements.
+             console.warn(`AI generated ${validation.data.questions.length} questions, but ${input.numQuestions} were requested. Raw AI Output: ${JSON.stringify(output, null, 2)}`);
+             // If strict number is required, uncomment the following:
+             // throw new Error(`AI generated ${validation.data.questions.length} questions instead of the requested ${input.numQuestions}.`);
         }
 
-
+        console.log("Quiz generation successful, returning validated data.");
         return validation.data; // Return the validated data
 
-      } catch (error) {
-        console.error("Error during generateQuizQuestionsFlow (server-side):", error); // Log the full error object
-         if (error instanceof Error && error.message.includes('API key not valid')) {
-              throw new Error('API key not valid. Please check your configuration.');
+      } catch (error: any) {
+        console.error("Error during generateQuizQuestionsFlow execution (server-side):", error); // Log the full error object
+         let errorMessage = 'Failed to generate quiz questions due to an unexpected server error.';
+
+         // Check for specific known error types or messages
+         if (error instanceof z.ZodError) {
+              errorMessage = `Data validation failed: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
+         } else if (error instanceof Error) {
+             if (error.message.includes('API key not valid')) {
+                  errorMessage = 'API key not valid. Please check your GOOGLE_GENAI_API_KEY configuration.';
+             } else if (error.message.includes('invalid quiz data format')) {
+                 errorMessage = error.message; // Propagate the specific validation error
+             } else if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
+                errorMessage = 'Network error: Could not connect to the AI service.';
+             } else if (error.message.includes('rate limit')) {
+                 errorMessage = 'API rate limit exceeded. Please wait and try again.';
+             } else {
+                 // Use the error message directly if it's somewhat informative
+                 errorMessage = `Failed to generate quiz: ${error.message}`;
+             }
          }
-         // Rethrow specific validation errors or generic server errors
-         if (error instanceof Error && error.message.startsWith('AI returned invalid quiz data')) {
-            throw error; // Propagate the specific validation error
-         }
-        throw new Error('Failed to generate quiz questions due to a server error.');
+
+        // Throw a new error with the refined message
+        throw new Error(errorMessage);
       }
   }
 );
-
-
-    

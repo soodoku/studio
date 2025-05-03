@@ -21,7 +21,7 @@ import {
   SidebarMenuButton,
 } from '@/components/ui/sidebar';
 import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -119,7 +119,7 @@ function HomeContent() {
         }
 
         // Basic check for duplicates (can be improved)
-        if (books.some(book => book.name === fileName && book.content.length === textContent.length)) {
+        if (books.some(book => book.name === fileName && book.userId === user.uid)) {
             toast({
             variant: "default",
             title: "Duplicate File",
@@ -312,14 +312,15 @@ function HomeContent() {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       let userFriendlyMessage = `Failed to generate summary. ${errorMessage}`;
 
-      // Provide more specific hints for common issues
-      if (errorMessage.includes('API key not valid')) {
-        userFriendlyMessage = "Failed to generate summary: Invalid API key. Please check your GOOGLE_GENAI_API_KEY in the .env file.";
-      } else if (errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error')) {
-        userFriendlyMessage = "Failed to generate summary: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
-      } else if (errorMessage.includes('Invalid input')) {
-         userFriendlyMessage = `Failed to generate summary: ${errorMessage}`; // Show specific validation error
+      // Provide more specific hints for common issues (already handled in summarize flow)
+       // Check if the server provided a more specific message
+      if (errorMessage.includes('API key not valid') || errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error') || errorMessage.includes('Invalid input')) {
+          userFriendlyMessage = errorMessage; // Use the specific error from the server
+      } else {
+          // Generic fallback if the server error wasn't specific enough or it was a client-side issue
+          userFriendlyMessage = "Failed to generate summary due to an unexpected error. Please check the console for details.";
       }
+
 
       setSummaryState({ loading: false, data: null, error: userFriendlyMessage });
       toast({
@@ -344,26 +345,32 @@ function HomeContent() {
             text: selectedBook.content,
             numQuestions: 5 // Generate 5 questions
         };
+      console.log("Requesting quiz generation with input:", input);
       const result = await generateQuizQuestions(input); // Pass structured input
+      console.log("Quiz generation result:", result);
       setQuizState({ loading: false, data: result, error: null });
        toast({
          title: "Quiz Generated",
          description: "Quiz questions created successfully.",
        });
     } catch (error) {
-        console.error("Error generating quiz (client-side):", error);
+        console.error("Error generating quiz (client-side catch):", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-        let userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`;
+        let userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`; // Default to the raw error message
 
-        // Provide more specific hints for common issues
-        if (errorMessage.includes('API key not valid')) {
-            userFriendlyMessage = "Failed to generate quiz: Invalid API key. Please check your GOOGLE_GENAI_API_KEY in the .env file.";
-        } else if (errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error')) {
-            userFriendlyMessage = "Failed to generate quiz: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
-        } else if (errorMessage.includes('Invalid input')) {
-            userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`; // Show specific validation error
-        } else if (errorMessage.includes('invalid quiz data')) {
-             userFriendlyMessage = `Failed to generate quiz: AI returned invalid data structure. ${errorMessage}`;
+        // Check if the error message provides specific details from the server
+        if (errorMessage.includes('API key not valid') ||
+            errorMessage.includes('invalid quiz data format') ||
+            errorMessage.includes('Network error:') ||
+            errorMessage.includes('rate limit exceeded') ||
+            errorMessage.includes('Invalid input')) {
+            userFriendlyMessage = errorMessage; // Use the specific error message from the flow
+        } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('server error') || errorMessage.includes('network error')) {
+             // More generic network/server error if specific details aren't available
+             userFriendlyMessage = "Failed to generate quiz: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
+        } else {
+             // Fallback for truly unexpected errors
+             userFriendlyMessage = "Failed to generate quiz due to an unexpected error. Please check the application logs.";
         }
 
 
@@ -475,7 +482,7 @@ function HomeContent() {
               <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
            </div>
             {/* Only show trigger on mobile */}
-           {isMobile && (
+           {mounted && isMobile && (
               <div className="ml-auto">
                 <SidebarTrigger />
               </div>
@@ -591,7 +598,7 @@ function HomeContent() {
                          <ArrowLeft className="h-5 w-5" />
                      </Button>
                  ) : (
-                     <SidebarTrigger />
+                      mounted && <SidebarTrigger /> // Only show trigger if mounted
                  )}
                 <div className="flex items-center gap-2 flex-grow justify-center">
                    <Book className="h-6 w-6 text-primary" />
@@ -713,7 +720,7 @@ function HomeContent() {
                           </div>
                         </AccordionTrigger>
                         <AccordionContent>
-                          {quizState.error && <p className="text-sm text-destructive">{quizState.error}</p>}
+                          {quizState.error && <p className="text-sm text-destructive break-words">{quizState.error}</p>} {/* Added break-words */}
                           {quizState.data && quizState.data.questions.length > 0 && (
                             <div className="space-y-6">
                                 {/* Display Score after submission */}
@@ -808,9 +815,10 @@ function HomeContent() {
 // Wrap HomeContent with SidebarProvider
 export default function Home() {
   return (
-    <SidebarProvider>
-      <HomeContent />
-    </SidebarProvider>
+    <AuthProvider> {/* Ensure AuthProvider wraps SidebarProvider or vice-versa consistently */}
+        <SidebarProvider>
+            <HomeContent />
+        </SidebarProvider>
+    </AuthProvider>
   );
 }
-
