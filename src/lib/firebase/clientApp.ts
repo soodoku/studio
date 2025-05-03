@@ -1,7 +1,7 @@
 // src/lib/firebase/clientApp.ts
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getAuth, Auth } from "firebase/auth";
-import { getFirestore, Firestore } from "firebase/firestore";
+import { getAuth, Auth, connectAuthEmulator } from "firebase/auth";
+import { getFirestore, Firestore, connectFirestoreEmulator } from "firebase/firestore";
 
 // Validate environment variables
 const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -14,13 +14,26 @@ const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 const measurementId = process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID;
 
 
-if (typeof window !== 'undefined' && (!apiKey || apiKey === "YOUR_API_KEY")) {
-    console.error("Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is still the placeholder value. Firebase will not be initialized. Please check your .env.local file and replace 'YOUR_API_KEY' with your actual key.");
-    // Optionally, throw an error to halt execution if Firebase is critical
-    // throw new Error("Firebase API Key is missing or invalid.");
-}
-if (typeof window !== 'undefined' && !projectId) {
-    console.error("Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing. Firebase will not be initialized properly. Please check your .env.local file.");
+// Explicitly check for placeholder values on the client-side
+let firebaseConfigValid = true;
+if (typeof window !== 'undefined') {
+    if (!apiKey || apiKey === "YOUR_API_KEY") {
+        console.error("CRITICAL: Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is still the placeholder value 'YOUR_API_KEY'. Firebase will NOT be initialized. Update .env.local.");
+        firebaseConfigValid = false;
+    }
+    if (!authDomain || authDomain === "YOUR_AUTH_DOMAIN") {
+        console.error("CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder. Update .env.local.");
+        firebaseConfigValid = false;
+    }
+     if (!projectId || projectId === "YOUR_PROJECT_ID") {
+        console.error("CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder. Update .env.local.");
+        firebaseConfigValid = false;
+    }
+     // Add checks for other essential placeholders if needed, e.g., appId
+    if (!appId || appId === "YOUR_APP_ID") {
+        console.error("CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder. Update .env.local.");
+        firebaseConfigValid = false;
+    }
 }
 
 
@@ -35,20 +48,19 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-let app: FirebaseApp | null = null; // Initialize as null
-let auth: Auth | null = null; // Initialize as null
-let db: Firestore | null = null; // Initialize as null
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
 
-// Only attempt initialization on the client-side AND if essential keys are present and not placeholders
-if (typeof window !== 'undefined' && apiKey && apiKey !== "YOUR_API_KEY" && projectId) {
+// Only attempt initialization on the client-side AND if the config is deemed valid
+if (typeof window !== 'undefined' && firebaseConfigValid) {
     if (!getApps().length) {
         try {
             app = initializeApp(firebaseConfig);
              console.log("Firebase initialized successfully.");
         } catch (error) {
              console.error("Firebase initialization failed:", error);
-             // Prevent further initialization if core app fails
-             app = null;
+             app = null; // Ensure app is null if init fails
         }
 
     } else {
@@ -56,29 +68,40 @@ if (typeof window !== 'undefined' && apiKey && apiKey !== "YOUR_API_KEY" && proj
          console.log("Firebase app already initialized.");
     }
 
+    // Initialize Auth and Firestore only if app initialization was successful
     if (app) {
         try {
             auth = getAuth(app);
+            // Example for using emulators during development (optional)
+            // if (process.env.NODE_ENV === 'development') {
+            //   console.log("Connecting to Firebase Auth Emulator");
+            //   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
+            // }
         } catch (error) {
             console.error("Failed to initialize Firebase Auth:", error);
             auth = null;
         }
         try {
             db = getFirestore(app);
+             // Example for using emulators during development (optional)
+            // if (process.env.NODE_ENV === 'development') {
+            //   console.log("Connecting to Firebase Firestore Emulator");
+            //   connectFirestoreEmulator(db, 'localhost', 8080);
+            // }
         } catch (error) {
             console.error("Failed to initialize Firebase Firestore:", error);
             db = null;
         }
     }
 
-} else if (typeof window !== 'undefined') {
-     // This message will now show if API key is missing OR if it's the placeholder
-     console.warn("Firebase not initialized due to missing or placeholder configuration (API Key or Project ID). Please update .env.local.");
+} else if (typeof window !== 'undefined' && !firebaseConfigValid) {
+     // Config was checked and found invalid
+     console.error("Firebase initialization skipped due to missing or placeholder configuration values in .env.local. Please update the file with your actual Firebase project details.");
 } else {
-    // Server-side or missing config: app, auth, db remain null
+    // Server-side rendering or other environments: app, auth, db remain null
+     // console.log("Firebase initialization skipped (not in a client-side browser environment or config invalid).");
 }
 
 
-// Export the instances for use in other client components/hooks
-// These might be null, handle accordingly in usage.
+// Export the instances (might be null if initialization failed or skipped)
 export { app, auth, db };
