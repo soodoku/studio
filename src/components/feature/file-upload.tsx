@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useRef, useState, type ChangeEvent } from 'react';
@@ -10,9 +11,14 @@ import { convertFileToText } from '@/services/file-conversion'; // Assuming this
 interface FileUploadProps {
   buttonVariant?: ButtonProps['variant'];
   buttonSize?: ButtonProps['size'];
+  onUploadSuccess?: (fileName: string) => void; // Callback for successful upload
 }
 
-export function FileUpload({ buttonVariant = 'outline', buttonSize = 'default' }: FileUploadProps) {
+export function FileUpload({
+  buttonVariant = 'outline',
+  buttonSize = 'default',
+  onUploadSuccess, // Destructure the callback prop
+}: FileUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
@@ -61,6 +67,12 @@ export function FileUpload({ buttonVariant = 'outline', buttonSize = 'default' }
         title: "Upload Successful",
         description: `${file.name} has been uploaded and is ready.`, // Update message based on actual processing
       });
+
+      // Call the success callback with the file name
+      if (onUploadSuccess) {
+        onUploadSuccess(file.name);
+      }
+
     } catch (error) {
       console.error("Error uploading file:", error);
       toast({
@@ -100,3 +112,4 @@ export function FileUpload({ buttonVariant = 'outline', buttonSize = 'default' }
     </>
   );
 }
+
