@@ -18,6 +18,7 @@ export default function RootLayout({
 
   return (
     // Add suppressHydrationWarning to ignore browser extension attribute mismatches
+    // This needs to be on the <html> tag
     <html lang="en" suppressHydrationWarning>
       <body className={bodyClassName}>
         {children}
