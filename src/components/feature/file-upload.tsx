@@ -6,18 +6,19 @@ import { Upload } from 'lucide-react';
 import { Button, type ButtonProps } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { convertFileToText } from '@/services/file-conversion'; // Assuming this service exists
+import { convertFileToText } from '@/services/file-conversion'; // Assuming this service exists and is updated
 
 interface FileUploadProps {
   buttonVariant?: ButtonProps['variant'];
   buttonSize?: ButtonProps['size'];
-  onUploadSuccess?: (fileName: string) => void; // Callback for successful upload
+  // Updated callback to receive filename and content
+  onUploadSuccess?: (fileName: string, textContent: string) => void;
 }
 
 export function FileUpload({
   buttonVariant = 'outline',
   buttonSize = 'default',
-  onUploadSuccess, // Destructure the callback prop
+  onUploadSuccess, // Destructure the updated callback prop
 }: FileUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -48,37 +49,31 @@ export function FileUpload({
 
     setIsUploading(true);
     toast({
-      title: "Uploading File",
-      description: `Processing ${file.name}...`,
+      title: "Processing File",
+      description: `Extracting text from ${file.name}...`,
     });
 
     try {
-      // Placeholder for actual file processing/upload logic
-      console.log('Selected file:', file);
-      // Simulate processing time
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Call the conversion function (currently a placeholder)
-      // const textContent = await convertFileToText(file);
-      // console.log('Converted text:', textContent);
-      // TODO: Handle the converted text (e.g., store it, pass it to TTS)
+      // Call the conversion function to get text content
+      const textContent = await convertFileToText(file);
+      console.log('Extracted text length:', textContent.length);
 
       toast({
-        title: "Upload Successful",
-        description: `${file.name} has been uploaded and is ready.`, // Update message based on actual processing
+        title: "Processing Successful",
+        description: `Text extracted from ${file.name}.`,
       });
 
-      // Call the success callback with the file name
+      // Call the success callback with the file name and text content
       if (onUploadSuccess) {
-        onUploadSuccess(file.name);
+        onUploadSuccess(file.name, textContent);
       }
 
     } catch (error) {
-      console.error("Error uploading file:", error);
+      console.error("Error processing file:", error);
       toast({
         variant: "destructive",
-        title: "Upload Failed",
-        description: "There was an error processing your file. Please try again.",
+        title: "Processing Failed",
+        description: "There was an error extracting text from your file. Please try again.",
       });
     } finally {
       setIsUploading(false);
@@ -107,9 +102,8 @@ export function FileUpload({
         className="w-full" // Make button full width in sidebar footer
       >
         <Upload className="mr-2 h-4 w-4" />
-        {isUploading ? 'Uploading...' : 'Upload File'}
+        {isUploading ? 'Processing...' : 'Upload File'}
       </Button>
     </>
   );
 }
-
