@@ -146,13 +146,13 @@ export default function Home() {
          description: "Chapter summary created successfully.",
        });
     } catch (error) {
-      console.error("Error generating summary:", error);
+      console.error("Error generating summary (client-side):", error); // Log the full error object
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       setSummaryState({ loading: false, data: null, error: `Failed to generate summary: ${errorMessage}` });
       toast({
         variant: "destructive",
         title: "Summarization Failed",
-        description: `Could not generate summary. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : 'Error reaching server.'}`,
+        description: `Could not generate summary. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : errorMessage.includes('server error') ? 'Error reaching server.' : 'Check console for details.'}`,
       });
     }
   };
@@ -169,13 +169,13 @@ export default function Home() {
          description: "Quiz questions created successfully.",
        });
     } catch (error) {
-      console.error("Error generating quiz:", error);
+      console.error("Error generating quiz (client-side):", error); // Log the full error object
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       setQuizState({ loading: false, data: null, error: `Failed to generate quiz: ${errorMessage}` });
       toast({
         variant: "destructive",
         title: "Quiz Generation Failed",
-        description: `Could not generate quiz. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : 'Error reaching server.'}`,
+        description: `Could not generate quiz. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : errorMessage.includes('server error') ? 'Error reaching server.' : 'Check console for details.'}`,
       });
     }
   };
@@ -191,11 +191,15 @@ export default function Home() {
    // Effect to poll speech state (basic approach)
    useEffect(() => {
      const interval = setInterval(() => {
-       const currentSpeaking = isCurrentlySpeaking();
-       const currentPaused = isCurrentlyPaused();
-       // Update state only if it differs from the polled state
-       setIsPlaying(currentSpeaking);
-       setIsPausedState(currentPaused);
+       // Check if window and speech synthesis are available before polling
+       if (typeof window !== 'undefined' && window.speechSynthesis) {
+         const currentSpeaking = isCurrentlySpeaking();
+         const currentPaused = isCurrentlyPaused();
+         // Update state only if it differs from the polled state
+         // Use functional updates to avoid stale state issues
+         setIsPlaying(prev => (prev !== currentSpeaking ? currentSpeaking : prev));
+         setIsPausedState(prev => (prev !== currentPaused ? currentPaused : prev));
+       }
      }, 500); // Check every 500ms
 
      return () => clearInterval(interval);

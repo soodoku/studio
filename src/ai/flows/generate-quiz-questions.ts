@@ -119,7 +119,7 @@ const generateQuizQuestionsFlow = ai.defineFlow<
         const validation = GenerateQuizQuestionsOutputSchema.safeParse(output);
 
         if (!validation.success) {
-            console.error('Invalid output structure from AI:', validation.error.issues);
+            console.error('Invalid output structure from AI (generateQuizQuestionsFlow):', validation.error.issues);
              // Try to provide more specific feedback if possible
              const errorDetails = validation.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
             throw new Error(`AI returned invalid quiz data: ${errorDetails}`);
@@ -137,7 +137,7 @@ const generateQuizQuestionsFlow = ai.defineFlow<
         return validation.data; // Return the validated data
 
       } catch (error) {
-        console.error("Error during generateQuizQuestionsFlow:", error);
+        console.error("Error during generateQuizQuestionsFlow (server-side):", error); // Log the full error object
          if (error instanceof Error && error.message.includes('API key not valid')) {
               throw new Error('API key not valid. Please check your configuration.');
          }
@@ -149,3 +149,4 @@ const generateQuizQuestionsFlow = ai.defineFlow<
       }
   }
 );
+

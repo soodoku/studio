@@ -74,14 +74,14 @@ const summarizeAudiobookChapterFlow = ai.defineFlow<
       const output = response?.output; // Access output property directly
 
       if (!output || typeof output.summary !== 'string') {
-        console.error('Invalid output structure from AI:', output);
+        console.error('Invalid output structure from AI (summarizeAudiobookChapterFlow):', output);
         throw new Error('Failed to generate a valid summary structure.');
       }
 
       return { summary: output.summary }; // Return only the summary
 
     } catch (error) {
-        console.error("Error during summarizeAudiobookChapterFlow:", error);
+        console.error("Error during summarizeAudiobookChapterFlow (server-side):", error); // Log the full error object
         // Check for specific API key errors (example, adjust based on actual error structure)
         if (error instanceof Error && error.message.includes('API key not valid')) {
              throw new Error('API key not valid. Please check your configuration.');
