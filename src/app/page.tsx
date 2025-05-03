@@ -1,9 +1,8 @@
-
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { AuthProvider, useAuth } from '@/contexts/AuthContext'; // Import AuthProvider
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 import { db, auth } from '@/lib/firebase/clientApp'; // Import Firestore DB and Auth
 import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc } from 'firebase/firestore'; // Firestore functions
 import { FileUpload } from '@/components/feature/file-upload';
@@ -20,7 +19,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
 } from '@/components/ui/sidebar';
-import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn } from 'lucide-react';
+import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn, Headphones } from 'lucide-react'; // Added Headphones icon
 import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -83,6 +82,13 @@ function HomeContent() {
     if (user) {
       setBooksLoading(true); // Start loading books
       const booksCollection = collection(db, 'books');
+      // Ensure Firestore instance 'db' is valid before querying
+      if (!db) {
+         console.error("Firestore instance (db) is not available. Cannot fetch books.");
+         toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database." });
+         setBooksLoading(false);
+         return;
+      }
       const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc')); // Order by creation time
 
       // Use onSnapshot for real-time updates
@@ -117,6 +123,12 @@ function HomeContent() {
             toast({ variant: "destructive", title: "Not Logged In", description: "You must be logged in to add books." });
             return;
         }
+         // Ensure Firestore instance 'db' is valid before adding
+         if (!db) {
+            console.error("Firestore instance (db) is not available. Cannot add book.");
+            toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database to save the book." });
+            return;
+         }
 
         // Basic check for duplicates (can be improved)
         if (books.some(book => book.name === fileName && book.userId === user.uid)) {
@@ -161,7 +173,7 @@ function HomeContent() {
     }, [user, books, isPlaying, isPausedState, toast]); // Include books in dependencies for duplicate check
 
     const deleteBook = async (bookId: string, bookName: string) => {
-        if (!user) return; // Should not happen if button is shown correctly
+        if (!user || !db) return; // Should not happen if button is shown correctly, also check db
 
         // If the book being deleted is currently selected, reset the view
         if (selectedBook?.id === bookId) {
@@ -420,6 +432,12 @@ function HomeContent() {
   // --- Logout Handler ---
   const handleLogout = async () => {
     try {
+        // Ensure auth instance is valid before signing out
+        if (!auth) {
+            console.error("Logout failed: Auth instance is not available.");
+            toast({ variant: 'destructive', title: 'Logout Failed', description: 'Authentication service unavailable.' });
+            return;
+        }
         await signOut(auth);
         toast({ title: 'Logged Out', description: 'You have been logged out successfully.' });
         // AuthProvider will handle redirect via the useEffect hook
@@ -654,42 +672,63 @@ function HomeContent() {
                      <CardTitle className="truncate pr-10">{selectedBook.name}</CardTitle> {/* Add padding for potential back button */}
                  </CardHeader>
                  <CardContent className="flex-1 p-4 overflow-auto"> {/* Changed overflow-hidden to overflow-auto */}
-                  {/* <ScrollArea className="h-full pr-4"> */} {/* Remove ScrollArea if CardContent handles scroll */}
                     <p className="text-sm text-foreground whitespace-pre-wrap break-words"> {/* Added break-words */}
                       {selectedBook.content || "No content available."}
                     </p>
-                  {/* </ScrollArea> */}
                 </CardContent>
-                <CardFooter className="border-t p-4 flex items-center justify-center gap-4 bg-muted/50 sticky bottom-0 z-10">
-                  <Button
-                    onClick={isPlaying ? handlePause : handlePlay}
-                    size="icon"
-                    variant="outline"
-                    disabled={!selectedBook?.content}
-                    aria-label={isPlaying ? "Pause" : "Play"}
-                  >
-                    {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-                  </Button>
-                  <Button
-                    onClick={handleStop}
-                    size="icon"
-                    variant="outline"
-                    disabled={!isPlaying && !isPausedState}
-                    aria-label="Stop"
-                  >
-                    <Square className="h-5 w-5" />
-                  </Button>
-                </CardFooter>
+                 {/* Removed TTS controls from CardFooter */}
+                 {/* <CardFooter className="border-t p-4 flex items-center justify-center gap-4 bg-muted/50 sticky bottom-0 z-10">
+                   <Button ... />
+                   <Button ... />
+                 </CardFooter> */}
               </Card>
 
-              {/* AI Features Area */}
+              {/* AI Features & Audio Area */}
               <Card className="flex flex-col lg:w-1/3 shadow-md overflow-hidden">
                 <CardHeader className="border-b sticky top-0 bg-card z-10">
-                  <CardTitle>AI Insights</CardTitle>
+                  <CardTitle>Processing & Insights</CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 p-4 overflow-auto"> {/* Changed overflow-hidden to overflow-auto */}
-                  {/* <ScrollArea className="h-full pr-4"> */} {/* Remove ScrollArea */}
-                    <Accordion type="single" collapsible className="w-full" defaultValue="summary">
+                    <Accordion type="single" collapsible className="w-full" defaultValue="audio"> {/* Default to audio open */}
+                      {/* Audio Playback Section */}
+                      <AccordionItem value="audio">
+                          <AccordionTrigger>
+                            <div className="flex items-center gap-2 w-full">
+                                <Headphones className="h-5 w-5 flex-shrink-0" />
+                                <span className="flex-grow text-left">Audio Playback</span>
+                                {/* Optionally add a spinner if audio generation was a long process */}
+                            </div>
+                          </AccordionTrigger>
+                          <AccordionContent>
+                              <div className="flex items-center justify-center gap-4 py-4">
+                                  <Button
+                                      onClick={isPlaying ? handlePause : handlePlay}
+                                      size="icon"
+                                      variant="outline"
+                                      disabled={!selectedBook?.content || (!isPlaying && !isPausedState && window.speechSynthesis?.speaking)} // Disable if no content or browser is already speaking unrelatedly
+                                      aria-label={isPlaying ? "Pause" : "Play"}
+                                  >
+                                      {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                                  </Button>
+                                  <Button
+                                      onClick={handleStop}
+                                      size="icon"
+                                      variant="outline"
+                                      disabled={!isPlaying && !isPausedState} // Disable if not playing or paused
+                                      aria-label="Stop"
+                                  >
+                                      <Square className="h-5 w-5" />
+                                  </Button>
+                              </div>
+                               {!selectedBook?.content && <p className="text-sm text-muted-foreground text-center">No content loaded for playback.</p>}
+                               {/* Error message specifically for TTS */}
+                               { typeof window !== 'undefined' && !window.speechSynthesis && (
+                                   <p className="text-sm text-destructive text-center mt-2">Text-to-Speech is not supported by your browser.</p>
+                               )}
+                          </AccordionContent>
+                      </AccordionItem>
+
+
                       {/* Summary Section */}
                       <AccordionItem value="summary">
                         <AccordionTrigger>
@@ -817,13 +856,13 @@ function HomeContent() {
 }
 
 
-// Wrap HomeContent with SidebarProvider
+// Wrap HomeContent with SidebarProvider and AuthProvider
 export default function Home() {
   return (
-    <AuthProvider> {/* Ensure AuthProvider wraps SidebarProvider or vice-versa consistently */}
-        <SidebarProvider>
-            <HomeContent />
-        </SidebarProvider>
-    </AuthProvider>
+      <AuthProvider>
+          <SidebarProvider>
+              <HomeContent />
+          </SidebarProvider>
+      </AuthProvider>
   );
 }
