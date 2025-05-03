@@ -22,8 +22,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
-import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput } from '@/ai/flows/generate-quiz-questions';
+import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput, type Question } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils'; // Import cn for conditional classNames
+
 
 // Define a type for a book including its content
 interface BookItem {
@@ -414,8 +416,8 @@ function HomeContent() {
 
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
-         {/* Show header only on mobile */}
-         {isMobile && (
+         {/* Mobile Header - Only render on client after mount */}
+         {mounted && isMobile && (
              <header className="flex h-14 items-center gap-4 border-b bg-card px-6">
                 {/* Show back button in reader view on mobile, otherwise show sidebar trigger */}
                 {viewMode === 'reader' ? (
@@ -448,8 +450,8 @@ function HomeContent() {
 
           {viewMode === 'reader' && selectedBook && (
             <div className="flex flex-1 flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full">
-               {/* Back Button (Desktop) - Only show if NOT mobile */}
-                {!isMobile && (
+               {/* Back Button (Desktop) - Only render on client after mount */}
+                {mounted && !isMobile && (
                     <div className="absolute top-6 left-6 z-10">
                          <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
                              <ArrowLeft className="h-5 w-5" />
@@ -634,5 +636,3 @@ export default function Home() {
     </SidebarProvider>
   );
 }
-
-    

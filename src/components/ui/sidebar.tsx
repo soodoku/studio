@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet" // Import SheetTitle
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Tooltip,
@@ -19,6 +19,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import * as VisuallyHidden from '@radix-ui/react-visually-hidden'; // Already imported for SheetContent title
+
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -71,19 +73,8 @@ const SidebarProvider = React.forwardRef<
     const isMobile = useIsMobile(); // isMobile can be undefined initially
     const [openMobile, setOpenMobile] = React.useState(false);
 
-    // Manage open state respecting controlled/uncontrolled logic and cookie persistence
-    const getInitialOpenState = () => {
-      if (typeof window === 'undefined') return defaultOpen; // Default on server
-      if (openProp !== undefined) return openProp; // Controlled component
-      const cookieValue = document.cookie
-        .split('; ')
-        .find(row => row.startsWith(`${SIDEBAR_COOKIE_NAME}=`))
-        ?.split('=')[1];
-      return cookieValue ? cookieValue === 'true' : defaultOpen;
-    };
-
-
-    const [_open, _setOpen] = React.useState(getInitialOpenState());
+    // Initialize state based on props or default, avoid cookie read here
+    const [_open, _setOpen] = React.useState(openProp ?? defaultOpen);
 
     // Effect to sync controlled prop changes
     React.useEffect(() => {
@@ -92,14 +83,17 @@ const SidebarProvider = React.forwardRef<
         }
     }, [openProp]);
 
-     // Effect to sync state with cookie on initial client load if uncontrolled
+     // Effect to read cookie and set initial state only on client mount for uncontrolled component
      React.useEffect(() => {
+        // Only run on client after mount, and only if uncontrolled
         if (openProp === undefined && typeof window !== 'undefined') {
           const cookieValue = document.cookie
             .split('; ')
             .find(row => row.startsWith(`${SIDEBAR_COOKIE_NAME}=`))
             ?.split('=')[1];
-          if (cookieValue) {
+
+          // Set state based on cookie if found, otherwise respect defaultOpen (already set initially)
+          if (cookieValue !== undefined) {
             _setOpen(cookieValue === 'true');
           }
         }
@@ -230,8 +224,6 @@ const Sidebar = React.forwardRef<
 
     // Render null on the server and during initial client hydration before mount
     if (!mounted) {
-      // Optionally render a placeholder/skeleton if preferred over null
-      // return <div className="w-0 md:w-[--sidebar-width] lg:w-[--sidebar-width-icon]" /> // Example placeholder
        return null;
     }
 
@@ -265,6 +257,10 @@ const Sidebar = React.forwardRef<
             }
             side={side}
           >
+             {/* Add a visually hidden title for accessibility inside SheetContent */}
+            <VisuallyHidden.Root asChild>
+                <SheetTitle>Sidebar Menu</SheetTitle>
+            </VisuallyHidden.Root>
             <div className="flex h-full w-full flex-col">{children}</div>
           </SheetContent>
         </Sheet>
@@ -896,4 +892,3 @@ export {
   SidebarTrigger,
   useSidebar,
 }
-
