@@ -42,7 +42,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
         # NEXT_PUBLIC_FIRESTORE_EMULATOR_PORT=8080
         ```
 
-    *   **Important**: Ensure you replace `"YOUR_..."` placeholders with your actual Firebase credentials.
+    *   **Important**: Ensure you replace `"YOUR_..."` placeholders with your actual Firebase credentials. If you are using Firebase Studio, these variables might be injected automatically, but verify they are correct and not the placeholders.
 
 3.  **Configure Google AI (Genkit)**:
     *   Obtain an API key for Google Generative AI (e.g., Gemini) from [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -79,17 +79,35 @@ This is a Next.js application built with Firebase Studio that allows users to up
 *   **Book Reading View**: Displays the extracted text content for reading.
 *   **AI Summarization**: Generate concise summaries of the book content using Genkit and Google AI.
 *   **AI Quiz Generation**: Create multiple-choice quizzes based on the book content using Genkit and Google AI. Quiz answers are evaluated and scored.
-*   **Firestore Integration**: Stores user book data (name, content, user ID) securely in Firestore, ensuring data privacy via security rules (must be configured).
+*   **Firestore Integration**: Stores user book data (name, content, user ID) securely in Firestore, ensuring data privacy via security rules.
 *   **Real-time Updates**: Bookshelf updates in real-time using Firestore snapshots.
 *   **Responsive Design**: Adapts layout for mobile and desktop views.
 *   **Collapsible Sidebar**: Sidebar can be collapsed to icon view on desktop.
+*   **PWA Support**: The application is configured as a Progressive Web App (PWA), allowing it to be installed on devices like Android.
+
+## Testing on Android
+
+You can test AudioBook Buddy on an Android device or emulator:
+
+1.  **Prepare PWA Assets**:
+    *   Ensure you have `icon-192x192.png` and `icon-512x512.png` files in the `public/` directory. You may need to create or download suitable icons.
+2.  **Serve the App**:
+    *   For development: Run `npm run dev` (typically on `http://localhost:9002`).
+    *   For production testing: Run `npm run build` then `npm start` (this might run on a different port like 3000 by default).
+3.  **Find Your Computer's IP**:
+    *   On your computer, find its local network IP address (e.g., `ipconfig` on Windows, `ifconfig` or `ip addr` on macOS/Linux). It usually looks like `192.168.x.x` or `10.0.x.x`.
+4.  **Access from Android**:
+    *   **Emulator**: Open the Chrome browser in the Android Emulator and navigate to `http://10.0.2.2:PORT` (replace `PORT` with the port your Next.js app is running on, e.g., 9002 or 3000). `10.0.2.2` is a special alias for your computer's localhost from the emulator.
+    *   **Real Device**: Ensure your Android device and computer are on the **same Wi-Fi network**. Open Chrome on your Android device and navigate to `http://YOUR_COMPUTER_IP:PORT` (replace `YOUR_COMPUTER_IP` with the IP address from step 3 and `PORT` with the correct port).
+5.  **Install PWA**:
+    *   Once the app loads in Chrome on your Android device, you should see a prompt or find an option in the Chrome menu (three dots) like "Install app" or "Add to Home screen". Tap it to install the PWA.
 
 ## Project Structure
 
 *   `src/app/`: Next.js App Router pages and layouts.
     *   `src/app/page.tsx`: Main application component handling library, reader, and AI features.
     *   `src/app/auth/page.tsx`: Authentication page.
-    *   `src/app/layout.tsx`: Root application layout.
+    *   `src/app/layout.tsx`: Root application layout (includes PWA manifest link).
     *   `src/app/globals.css`: Global styles and Tailwind CSS/ShadCN theme variables.
 *   `src/components/`: Reusable UI components.
     *   `src/components/feature/`: Feature-specific components (AuthForm, FileUpload).
@@ -107,6 +125,8 @@ This is a Next.js application built with Firebase Studio that allows users to up
     *   `src/ai/dev.ts`: Entry point for the Genkit development server.
     *   `src/ai/flows/`: Genkit flow definitions (summarization, quiz generation).
 *   `public/`: Static assets.
+    *   `public/manifest.json`: PWA manifest file.
+    *   `public/icon-*.png`: Application icons for PWA (ensure these exist).
 *   `.env.local`: Environment variables (Firebase keys, AI keys). **DO NOT COMMIT THIS FILE**.
 *   `next.config.ts`: Next.js configuration (includes webpack config for pdf.js worker).
 *   `tailwind.config.ts`: Tailwind CSS configuration.
@@ -117,7 +137,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
 ## Troubleshooting
 
 *   **Firebase Errors (Auth/Firestore)**:
-    *   Ensure all `NEXT_PUBLIC_FIREBASE_...` variables in `.env.local` are correct and **not** placeholder values.
+    *   Ensure all `NEXT_PUBLIC_FIREBASE_...` variables in `.env.local` are correct and **not** placeholder values. If using Firebase Studio, double-check the injected environment variables.
     *   Verify Email/Password authentication and Firestore are enabled in your Firebase project console.
     *   Check the browser console and `src/lib/firebase/clientApp.ts` for specific initialization error messages.
 *   **Genkit Errors (Summarize/Quiz)**:
@@ -126,7 +146,14 @@ This is a Next.js application built with Firebase Studio that allows users to up
     *   Check the **Genkit terminal** for errors related to API key validation or model access.
     *   Make sure the Google AI (Generative Language API) is enabled in your Google Cloud project associated with the API key.
 *   **PDF Text Extraction Errors**:
-    *   Ensure the `pdfjs-dist` worker file (`pdf.worker.min.mjs`) is correctly copied by Webpack (check `next.config.ts`). The path `/_next/static/chunks/pdf.worker.min.mjs` should be accessible.
-    *   Check browser console for errors related to PDF parsing or worker loading. Password-protected or corrupted PDFs will cause errors.
+    *   Ensure the `pdfjs-dist` worker file (`pdf.worker.min.mjs`) is correctly copied by Webpack (check `next.config.ts`). The path `/_next/static/chunks/pdf.worker.min.mjs` should be accessible in the browser (check Network tab in DevTools for 404s).
+    *   Check browser console for errors related to PDF parsing or worker loading (`Failed to fetch dynamically imported module`, etc.). Password-protected or corrupted PDFs will cause errors.
 *   **Text-to-Speech Issues**:
     *   TTS relies on the browser's built-in capabilities (SpeechSynthesis API). Ensure your browser supports it. Some browsers/OS might have limited voice options or require specific settings.
+*   **PWA/Android Testing Issues**:
+    *   Ensure your computer and Android device/emulator are on the same network.
+    *   Check firewall settings if you cannot connect from Android to your computer's IP.
+    *   Verify the port number used in the URL (`9002` for dev, maybe `3000` for prod).
+    *   Ensure the PWA icons (`icon-192x192.png`, `icon-512x512.png`) exist in the `public` folder.
+*   **Hydration Errors**:
+    *   These often occur when server-rendered HTML differs from the initial client render. Check for browser extensions interfering, use of `window` or `Date.now()` outside `useEffect`, or conditional rendering mismatches. Adding `suppressHydrationWarning` to `<html>` in `layout.tsx` can help ignore minor issues often caused by extensions.
