@@ -10,7 +10,7 @@ import {
   signInWithEmailAndPassword,
   AuthError,
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase/clientApp';
+import { auth, initError as firebaseInitError } from '@/lib/firebase/clientApp'; // Import auth and initError
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,11 +46,16 @@ export function AuthForm() {
 
     // Ensure auth is initialized (not null) before attempting login/signup
     if (!auth) {
-        console.error("AuthForm: Firebase Auth is not initialized (null). Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts for critical errors.");
+        // Use the specific initialization error message if available
+        const description = firebaseInitError
+          ? `Authentication service unavailable due to initialization error: ${firebaseInitError}`
+          : 'Authentication service is unavailable. Please check configuration or contact support.';
+
+        console.error(`AuthForm: Firebase Auth is not initialized (null). ${firebaseInitError || 'Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts for critical errors.'}`);
         toast({
             variant: 'destructive',
             title: 'Initialization Error',
-            description: 'Authentication service is unavailable. Please check configuration or contact support.',
+            description: description,
         });
         setLoading(false);
         return;
@@ -97,6 +102,9 @@ export function AuthForm() {
          case 'auth/network-request-failed':
             errorMessage = 'Network error. Please check your connection and try again.';
             break;
+          case 'auth/emulator-config-failed':
+             errorMessage = 'Emulator configuration failed. Check host/port settings.';
+             break;
          case 'auth/operation-not-allowed':
             errorMessage = 'Email/password sign-in is not enabled for this project.';
             console.error("Firebase Error: Email/Password sign-in method needs to be enabled in the Firebase Authentication console.");
