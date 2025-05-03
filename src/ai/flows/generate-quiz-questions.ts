@@ -158,15 +158,19 @@ const generateQuizQuestionsFlow = ai.defineFlow<
          if (error instanceof z.ZodError) {
               errorMessage = `Data validation failed: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
          } else if (error instanceof Error) {
-             if (error.message.includes('API key not valid')) {
-                  errorMessage = 'API key not valid. Please check your GOOGLE_GENAI_API_KEY configuration.';
+             // Check for specific error messages from Google AI or Genkit
+             if (error.message.includes('API key not valid') || error.message.includes('Invalid API key') || (error as any).details?.includes?.('API_KEY_INVALID')) {
+                  errorMessage = 'Google AI API key not valid. Please check your GOOGLE_GENAI_API_KEY configuration in .env.local and ensure the Genkit server was restarted after changes.';
              } else if (error.message.includes('invalid quiz data format')) {
                  errorMessage = error.message; // Propagate the specific validation error
              } else if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
-                errorMessage = 'Network error: Could not connect to the AI service.';
+                errorMessage = 'Network error: Could not connect to the AI service. Ensure the Genkit server is running and can reach Google AI.';
              } else if (error.message.includes('rate limit')) {
                  errorMessage = 'API rate limit exceeded. Please wait and try again.';
-             } else {
+             } else if (error.message.includes('Billing account not configured')) {
+                 errorMessage = 'Google Cloud project billing is not configured correctly for the API key used.';
+             }
+              else {
                  // Use the error message directly if it's somewhat informative
                  errorMessage = `Failed to generate quiz: ${error.message}`;
              }

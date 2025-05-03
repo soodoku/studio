@@ -80,14 +80,29 @@ const summarizeAudiobookChapterFlow = ai.defineFlow<
 
       return { summary: output.summary }; // Return only the summary
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error during summarizeAudiobookChapterFlow (server-side):", error); // Log the full error object
-        // Check for specific API key errors (example, adjust based on actual error structure)
-        if (error instanceof Error && error.message.includes('API key not valid')) {
-             throw new Error('API key not valid. Please check your configuration.');
-        }
-        // Rethrow a generic error for other issues
-        throw new Error('Failed to generate summary due to a server error.');
+         let errorMessage = 'Failed to generate summary due to an unexpected server error.';
+
+         if (error instanceof Error) {
+            // Check for specific error messages from Google AI or Genkit
+             if (error.message.includes('API key not valid') || error.message.includes('Invalid API key') || (error as any).details?.includes?.('API_KEY_INVALID')) {
+                  errorMessage = 'Google AI API key not valid. Please check your GOOGLE_GENAI_API_KEY configuration in .env.local and ensure the Genkit server was restarted after changes.';
+             } else if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
+                 errorMessage = 'Network error: Could not connect to the AI service. Ensure the Genkit server is running and can reach Google AI.';
+             } else if (error.message.includes('rate limit')) {
+                 errorMessage = 'API rate limit exceeded. Please wait and try again.';
+             } else if (error.message.includes('Billing account not configured')) {
+                 errorMessage = 'Google Cloud project billing is not configured correctly for the API key used.';
+             }
+             else {
+                 // Use the error message directly if it's somewhat informative
+                 errorMessage = `Failed to generate summary: ${error.message}`;
+             }
+         }
+
+        // Rethrow a new error with the refined message
+        throw new Error(errorMessage);
     }
   }
 );
