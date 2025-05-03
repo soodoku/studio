@@ -87,13 +87,16 @@ This is a Next.js application built with Firebase Studio that allows users to up
 
 ## Testing on Android
 
-You can test AudioBook Buddy on an Android device or emulator:
+You can test AudioBook Buddy on an Android device or emulator by leveraging its PWA capabilities:
 
 1.  **Prepare PWA Assets**:
-    *   Ensure you have `icon-192x192.png` and `icon-512x512.png` files in the `public/` directory. You may need to create or download suitable icons.
+    *   Ensure you have `icon-192x192.png` and `icon-512x512.png` files in the `public/` directory. These are referenced in `public/manifest.json`. You may need to create or download suitable icons if they don't exist.
+    *   Verify that `public/manifest.json` is configured correctly and linked in `src/app/layout.tsx`.
 2.  **Serve the App**:
-    *   For development: Run `npm run dev` (typically on `http://localhost:9002`).
-    *   For production testing: Run `npm run build` then `npm start` (this might run on a different port like 3000 by default).
+    *   For development testing: Run `npm run dev` (typically on `http://localhost:9002`).
+    *   For production testing (recommended for more realistic PWA behavior):
+        *   Run `npm run build`
+        *   Run `npm start` (this might run on a different port like 3000 by default, check the output).
 3.  **Find Your Computer's IP**:
     *   On your computer, find its local network IP address (e.g., `ipconfig` on Windows, `ifconfig` or `ip addr` on macOS/Linux). It usually looks like `192.168.x.x` or `10.0.x.x`.
 4.  **Access from Android**:
@@ -101,6 +104,56 @@ You can test AudioBook Buddy on an Android device or emulator:
     *   **Real Device**: Ensure your Android device and computer are on the **same Wi-Fi network**. Open Chrome on your Android device and navigate to `http://YOUR_COMPUTER_IP:PORT` (replace `YOUR_COMPUTER_IP` with the IP address from step 3 and `PORT` with the correct port).
 5.  **Install PWA**:
     *   Once the app loads in Chrome on your Android device, you should see a prompt or find an option in the Chrome menu (three dots) like "Install app" or "Add to Home screen". Tap it to install the PWA.
+    *   The PWA will appear as an icon on your home screen and launch in a standalone window without the browser address bar.
+
+## Publishing to Google Play Store (via TWA)
+
+To publish your PWA to the Google Play Store, you need to wrap it using a Trusted Web Activity (TWA). This requires some additional setup outside of the Next.js project itself.
+
+1.  **Prerequisites**:
+    *   **Install Node.js and npm**: Needed for the Bubblewrap CLI.
+    *   **Install Java Development Kit (JDK)**: Version 8 or higher is typically required for Android development tools.
+    *   **Install Android Studio**: Provides the Android SDK and build tools. ([https://developer.android.com/studio](https://developer.android.com/studio))
+    *   **Deploy Your PWA**: Your Next.js app must be built (`npm run build`) and deployed to a publicly accessible HTTPS URL. TWA requires HTTPS.
+    *   **Verify Domain Ownership**: You must verify ownership of the domain where your PWA is hosted in the Google Play Console. This involves configuring Digital Asset Links (`assetlinks.json`).
+
+2.  **Install Bubblewrap CLI**:
+    ```bash
+    npm install -g @bubblewrap/cli
+    ```
+
+3.  **Initialize Bubblewrap Project**:
+    *   Navigate to your Next.js project directory in your terminal.
+    *   Run the init command:
+        ```bash
+        bubblewrap init --manifest https://YOUR_DEPLOYED_PWA_URL/manifest.json
+        ```
+        (Replace `https://YOUR_DEPLOYED_PWA_URL` with the actual URL where your PWA is hosted).
+    *   Bubblewrap will guide you through configuration, asking for details like:
+        *   **Application ID**: (e.g., `com.yourcompany.audiobookbuddy`)
+        *   **App Name**: (e.g., `AudioBook Buddy`)
+        *   **Launcher Icon Path**: Path to your app icon (e.g., `public/icon-512x512.png`).
+        *   **Signing Key Information**: You'll need to create or provide details for a signing key to sign your Android app. Follow the prompts carefully and **securely back up your signing key and its password**. Losing it means you cannot update your app.
+
+4.  **Build the Android Project**:
+    ```bash
+    bubblewrap build
+    ```
+    *   This command generates an Android project (usually in an `android/` subfolder) and builds a signed Android App Bundle (`app-release-bundle.aab`) and potentially an APK (`app-release-signed.apk`). The AAB is the recommended format for uploading to Google Play.
+
+5.  **Upload to Google Play Console**:
+    *   Go to the [Google Play Console](https://play.google.com/console/).
+    *   Create a developer account (requires a one-time fee).
+    *   Create a new app entry.
+    *   Fill in all required store listing details (description, screenshots, privacy policy, content rating, etc.).
+    *   Upload the generated `app-release-bundle.aab` file under the "Production" or a testing track (Internal, Closed, Open).
+    *   Ensure you have correctly set up Digital Asset Links (`assetlinks.json`) on your web server at `https://YOUR_DOMAIN/.well-known/assetlinks.json` to verify the link between your website and your Android app. Bubblewrap can help generate this file (`assetlinks.json` will be created during the `build` step).
+    *   Submit your app for review.
+
+**Important Notes for TWA**:
+*   **HTTPS is Mandatory**: Your PWA *must* be served over HTTPS.
+*   **Digital Asset Links**: Correctly setting up `assetlinks.json` is crucial for the TWA to work without the browser address bar showing.
+*   **Updates**: Updates to your web app (PWA) content are usually reflected automatically in the installed Android app after a short delay. You only need to rebuild and resubmit the TWA package via Bubblewrap and the Play Console if you change fundamental aspects like the manifest URL, app icon, signing key, or add native Android features.
 
 ## Project Structure
 
@@ -154,6 +207,11 @@ You can test AudioBook Buddy on an Android device or emulator:
     *   Ensure your computer and Android device/emulator are on the same network.
     *   Check firewall settings if you cannot connect from Android to your computer's IP.
     *   Verify the port number used in the URL (`9002` for dev, maybe `3000` for prod).
-    *   Ensure the PWA icons (`icon-192x192.png`, `icon-512x512.png`) exist in the `public` folder.
+    *   Ensure the PWA icons (`icon-192x192.png`, `icon-512x512.png`) exist in the `public` folder and are correctly referenced in `manifest.json`.
+    *   Check Chrome DevTools (Remote Devices) for console errors on the Android device.
 *   **Hydration Errors**:
     *   These often occur when server-rendered HTML differs from the initial client render. Check for browser extensions interfering, use of `window` or `Date.now()` outside `useEffect`, or conditional rendering mismatches. Adding `suppressHydrationWarning` to `<html>` in `layout.tsx` can help ignore minor issues often caused by extensions.
+*   **TWA Issues**:
+    *   **Address Bar Showing**: Usually means `assetlinks.json` is missing, incorrect, or not accessible on your server at the correct path (`/.well-known/assetlinks.json`). Use Google's [Asset Link Testing Tool](https://developers.google.com/digital-asset-links/tools/generator).
+    *   **Build Errors**: Check JDK/Android Studio setup and Bubblewrap output for specific error messages.
+    *   **Play Store Rejection**: Review Google Play policies carefully. Common issues involve metadata, permissions, or content.
