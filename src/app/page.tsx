@@ -117,6 +117,7 @@ export default function Home() {
      const interval = setInterval(() => {
        const currentSpeaking = isCurrentlySpeaking();
        const currentPaused = isCurrentlyPaused();
+       // Only update state if it differs from the polled state to avoid unnecessary re-renders
        if (isPlaying !== currentSpeaking || isPausedState !== currentPaused) {
          setIsPlaying(currentSpeaking);
          setIsPausedState(currentPaused);
@@ -124,7 +125,7 @@ export default function Home() {
      }, 500); // Check every 500ms
 
      return () => clearInterval(interval);
-   }, [isPlaying, isPausedState]);
+   }, [isPlaying, isPausedState]); // Re-run effect if component's state changes
 
 
   return (
@@ -140,10 +141,10 @@ export default function Home() {
           </div>
         </SidebarHeader>
         <SidebarContent className="p-4">
-          <p className="mb-2 font-medium text-foreground">Your Bookshelf</p>
+          <p className="mb-2 font-medium text-foreground">Convert to Audio</p>
           {books.length === 0 ? (
              <div className="mt-4 text-center text-sm text-muted-foreground">
-               No books uploaded yet.
+               Upload a file to convert.
              </div>
           ) : (
             <ul className="space-y-1">
