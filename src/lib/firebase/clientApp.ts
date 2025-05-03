@@ -13,9 +13,13 @@ const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 // measurementId is optional
 const measurementId = process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID;
 
-
-// Explicitly check for placeholder values on the client-side
+// Initialize Firebase variables as null
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
 let firebaseConfigValid = true; // Assume valid initially
+
+// Perform checks only on the client-side
 if (typeof window !== 'undefined') {
     if (!apiKey || apiKey === "YOUR_API_KEY") {
         console.error("CRITICAL: Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is still the placeholder value 'YOUR_API_KEY'. Firebase features will NOT work. Update .env.local.");
@@ -29,33 +33,24 @@ if (typeof window !== 'undefined') {
         console.error("CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder 'YOUR_PROJECT_ID'. Update .env.local.");
         firebaseConfigValid = false;
     }
-     // Add checks for other essential placeholders if needed, e.g., appId
     if (!appId || appId === "YOUR_APP_ID") {
         console.error("CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder 'YOUR_APP_ID'. Update .env.local.");
         firebaseConfigValid = false;
     }
-}
+    // Add more checks for other potentially critical variables like storageBucket if needed
 
-
-const firebaseConfig = {
-  apiKey: apiKey,
-  authDomain: authDomain,
-  projectId: projectId,
-  storageBucket: storageBucket,
-  messagingSenderId: messagingSenderId,
-  appId: appId,
-  measurementId: measurementId,
-};
-
-// Initialize Firebase
-let app: FirebaseApp | null = null;
-let auth: Auth | null = null;
-let db: Firestore | null = null;
-
-// Only attempt initialization on the client-side.
-if (typeof window !== 'undefined') {
-    // Only initialize if the config is potentially valid
+    // Only attempt initialization if the config is deemed valid *after* checks
     if (firebaseConfigValid) {
+        const firebaseConfig = {
+          apiKey: apiKey,
+          authDomain: authDomain,
+          projectId: projectId,
+          storageBucket: storageBucket,
+          messagingSenderId: messagingSenderId,
+          appId: appId,
+          measurementId: measurementId,
+        };
+
         if (!getApps().length) {
             try {
                 app = initializeApp(firebaseConfig);
@@ -95,13 +90,13 @@ if (typeof window !== 'undefined') {
                 db = null; // Set db to null if its initialization fails
             }
         } else {
-            // If app initialization failed, ensure auth and db are null
+            // If app initialization failed (or was skipped due to invalid config earlier), ensure auth and db are null
              auth = null;
              db = null;
-             console.error("Firebase app initialization failed earlier, skipping Auth and Firestore setup.");
+             console.error("Firebase app initialization did not complete, skipping Auth and Firestore setup.");
         }
     } else {
-        // Config was deemed invalid from the start
+        // Config was deemed invalid from the start, ensure services are null
         app = null;
         auth = null;
         db = null;
@@ -109,10 +104,10 @@ if (typeof window !== 'undefined') {
     }
 
 } else {
-    // Server-side rendering or other environments: app, auth, db remain null
+    // Server-side rendering or other non-browser environments: app, auth, db remain null
      // console.log("Firebase initialization skipped (not in a client-side browser environment).");
 }
 
 
-// Export the instances (might be null if initialization failed or skipped)
+// Export the instances (which will be null if config is invalid or on server)
 export { app, auth, db };

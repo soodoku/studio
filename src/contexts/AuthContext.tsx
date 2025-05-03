@@ -26,7 +26,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     // This effect runs only on the client side after mount.
-    // Check if the Firebase Auth instance was successfully initialized before subscribing.
+
+    // Check if the Firebase Auth instance was successfully initialized (is not null)
     if (auth) {
       // Listen for authentication state changes
       const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -40,16 +41,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } else {
       // Handle the case where the auth instance is null (e.g., config error, SSR)
       // We should stop loading and set user to null.
-      console.warn("Firebase Auth instance not available in AuthContext useEffect. Cannot listen for auth changes. Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts.");
-      setLoading(false);
-      setUser(null);
+      console.warn("Firebase Auth instance is null in AuthContext useEffect. Cannot listen for auth changes. Likely due to missing/invalid Firebase config in .env.local.");
+      setLoading(false); // Stop loading as auth state cannot be determined
+      setUser(null); // Ensure user is null
       // No cleanup function needed as no listener was attached.
       return undefined;
     }
   }, []); // Empty dependency array ensures this runs once on mount
 
-  // Show loading indicator while determining auth state
-  // This check runs on both server and client initially.
+  // Show loading indicator while determining auth state OR if auth failed init.
   // On the client, it shows until the useEffect above sets loading to false.
   if (loading) {
     return (
@@ -60,6 +60,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }
 
   // Once loading is false, render children with the current user state.
+  // If auth init failed, user will be null.
   return (
     <AuthContext.Provider value={{ user, loading }}>
       {children}

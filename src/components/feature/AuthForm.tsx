@@ -44,18 +44,17 @@ export function AuthForm() {
     setLoading(true);
     const { email, password } = data;
 
-    // Ensure auth is initialized before attempting login/signup
+    // Ensure auth is initialized (not null) before attempting login/signup
     if (!auth) {
-        console.error("Firebase Auth is not initialized. Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts");
+        console.error("AuthForm: Firebase Auth is not initialized (null). Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts for critical errors.");
         toast({
             variant: 'destructive',
             title: 'Initialization Error',
-            description: 'Firebase connection failed. Please check configuration.',
+            description: 'Authentication service is unavailable. Please check configuration or contact support.',
         });
         setLoading(false);
         return;
     }
-
 
     try {
       if (isLogin) {
@@ -72,14 +71,18 @@ export function AuthForm() {
       console.error('Authentication error:', error);
       const authError = error as AuthError;
       let errorMessage = 'An unexpected error occurred. Please try again.';
+
        // Firebase specific error handling
        switch (authError.code) {
           case 'auth/api-key-not-valid':
-            errorMessage = 'Invalid Firebase API Key. Please check your .env.local file.';
-            console.error("Firebase Error: Invalid API Key. Ensure NEXT_PUBLIC_FIREBASE_API_KEY in .env.local is correct and the variable is prefixed with NEXT_PUBLIC_.");
+          case 'auth/app-not-authorized': // May occur if domain isn't authorized
+          case 'auth/invalid-api-key': // Explicit invalid key error
+            errorMessage = 'Invalid or unauthorized Firebase configuration. Please check your setup.';
+            console.error("Firebase Error: Invalid API Key or Configuration. Ensure NEXT_PUBLIC_FIREBASE_... variables in .env.local are correct and the domain is authorized.");
             break;
          case 'auth/user-not-found':
-         case 'auth/wrong-password':
+         case 'auth/invalid-credential': // General invalid credential error (covers wrong password)
+         case 'auth/wrong-password': // More specific password error
            errorMessage = 'Invalid email or password.';
            break;
          case 'auth/email-already-in-use':
@@ -94,13 +97,17 @@ export function AuthForm() {
          case 'auth/network-request-failed':
             errorMessage = 'Network error. Please check your connection and try again.';
             break;
+         case 'auth/operation-not-allowed':
+            errorMessage = 'Email/password sign-in is not enabled for this project.';
+            console.error("Firebase Error: Email/Password sign-in method needs to be enabled in the Firebase Authentication console.");
+            break;
          default:
-            // Check if it's the placeholder key causing the issue indirectly
-            if(process.env.NEXT_PUBLIC_FIREBASE_API_KEY === "YOUR_API_KEY") {
-                errorMessage = "Firebase API Key is set to the placeholder value. Please update .env.local with your actual key.";
+             // Check again for placeholder keys as a potential root cause, even if the reported error is different
+            if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_API_KEY === "YOUR_API_KEY") {
+                 errorMessage = "Configuration Error: Firebase API Key is still the placeholder. Please update .env.local.";
                  console.error("Firebase Error: API Key is still the placeholder 'YOUR_API_KEY'. Update .env.local.");
             } else {
-                errorMessage = `Authentication failed: ${authError.message}`; // More generic fallback
+                 errorMessage = `Authentication failed: ${authError.message || authError.code}`; // More generic fallback
             }
             break;
        }
