@@ -3,9 +3,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth, AuthProvider } from '@/contexts/AuthContext'; // Import useAuth and AuthProvider
 import { db, auth } from '@/lib/firebase/clientApp'; // Import Firestore DB and Auth
-import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc } from 'firebase/firestore'; // Firestore functions
+import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc, updateDoc } from 'firebase/firestore'; // Firestore functions
 import { FileUpload } from '@/components/feature/file-upload';
 import {
   SidebarProvider,
@@ -34,6 +34,8 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { signOut } from 'firebase/auth';
+// Import only the status flags, not the 'ai' instance itself to avoid server-side code in client component
+import { isAiInitialized, aiInitializationError } from '@/ai/ai-instance';
 
 
 // Define a type for a book including its content and Firestore ID
@@ -307,8 +309,9 @@ function HomeContent() {
 
  const handleSummarize = async () => {
     if (!selectedBook?.content) return;
-    if (!ai) {
-        toast({ variant: "destructive", title: "AI Error", description: "AI service not initialized. Check API Key." });
+    // Use the imported boolean flag and error message
+    if (!isAiInitialized) {
+        toast({ variant: "destructive", title: "AI Error", description: aiInitializationError || "AI service not initialized." });
         return;
     }
 
@@ -346,8 +349,9 @@ function HomeContent() {
 
   const handleGenerateQuiz = async () => {
     if (!selectedBook?.content) return;
-     if (!ai) {
-        toast({ variant: "destructive", title: "AI Error", description: "AI service not initialized. Check API Key." });
+     // Use the imported boolean flag and error message
+     if (!isAiInitialized) {
+        toast({ variant: "destructive", title: "AI Error", description: aiInitializationError || "AI service not initialized." });
         return;
     }
 
@@ -429,25 +433,30 @@ const handleGenerateAudio = async () => {
         const generatedAudioFileName = `${selectedBook.id}_audio.mp3`; // Example file name
 
         // Update Firestore - this would happen on the server in reality after file upload
-        if (db) {
+        if (db && user) {
             const bookRef = doc(db, "books", selectedBook.id);
-            // In a real scenario, you'd use updateDoc from the server/cloud function
-            // await updateDoc(bookRef, { audioFileName: generatedAudioFileName }); // Example
-            console.log(`Firestore update simulation: Set audioFileName to ${generatedAudioFileName} for book ${selectedBook.id}`);
-             // Since we can't directly update from client rule restrictions, we just log
-             // The onSnapshot listener *should* pick up changes if they were made server-side.
-             // For this simulation, we'll manually update the local state to reflect the change.
-             setBooks(prevBooks =>
-                 prevBooks.map(book =>
-                     book.id === selectedBook.id
-                         ? { ...book, audioFileName: generatedAudioFileName }
-                         : book
-                 )
-             );
-              setSelectedBook(prevSelected => prevSelected ? { ...prevSelected, audioFileName: generatedAudioFileName } : null);
+             // Check if the user owns the book before updating
+            // This check should ideally be handled by Firestore rules on the server
+            // but we add a client-side check for immediate feedback / prevention
+             if (selectedBook.userId !== user.uid) {
+                throw new Error("Permission denied: You do not own this book.");
+             }
+
+            try {
+                await updateDoc(bookRef, { audioFileName: generatedAudioFileName });
+                console.log(`Firestore updated: Set audioFileName to ${generatedAudioFileName} for book ${selectedBook.id}`);
+                // No need to manually update local state, onSnapshot will trigger update
+            } catch (updateError) {
+                console.error("Firestore update failed:", updateError);
+                 // Check if it's a permissions error
+                 if (updateError instanceof Error && updateError.message.includes('permission-denied')) {
+                      throw new Error("Permission denied: Failed to update book data. Check Firestore rules.");
+                 }
+                throw new Error("Failed to save audio file reference to the database.");
+            }
 
         } else {
-             throw new Error("Firestore database connection not available.");
+             throw new Error("Firestore database connection or user authentication not available.");
         }
 
 
@@ -834,16 +843,16 @@ const handleGenerateAudio = async () => {
                           {summaryState.error && <p className="text-sm text-destructive">{summaryState.error}</p>}
                           {summaryState.data && <p className="text-sm">{summaryState.data.summary}</p>}
                           {!summaryState.loading && !summaryState.data && !summaryState.error && (
-                            <Button onClick={handleSummarize} size="sm" className="w-full" disabled={!selectedBook?.content || !ai}>
+                            <Button onClick={handleSummarize} size="sm" className="w-full" disabled={!selectedBook?.content || !isAiInitialized}>
                               Generate Summary
                             </Button>
                           )}
                            {summaryState.data && !summaryState.loading && (
-                              <Button onClick={handleSummarize} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !ai}>
+                              <Button onClick={handleSummarize} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !isAiInitialized}>
                                 Regenerate Summary
                               </Button>
                             )}
-                            {!ai && <p className="text-xs text-destructive mt-2 text-center">AI Service Unavailable (Check API Key)</p>}
+                            {!isAiInitialized && <p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service Unavailable"}</p>}
                         </AccordionContent>
                       </AccordionItem>
 
@@ -912,7 +921,7 @@ const handleGenerateAudio = async () => {
                                 )}
 
                                 {quizSubmitted && (
-                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content || !ai}>
+                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content || !isAiInitialized}>
                                         Generate New Quiz
                                     </Button>
                                 )}
@@ -922,16 +931,16 @@ const handleGenerateAudio = async () => {
                                <p className="text-sm text-muted-foreground">No quiz questions generated.</p>
                            )}
                           {!quizState.loading && !quizState.data && !quizState.error && (
-                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.content || !ai}>
+                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.content || !isAiInitialized}>
                               Generate Quiz
                             </Button>
                           )}
                            {quizState.data && !quizSubmitted && !quizState.loading && (
-                              <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !ai}>
+                              <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !isAiInitialized}>
                                 Regenerate Quiz
                               </Button>
                             )}
-                             {!ai && <p className="text-xs text-destructive mt-2 text-center">AI Service Unavailable (Check API Key)</p>}
+                             {!isAiInitialized && <p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service Unavailable"}</p>}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
@@ -946,13 +955,10 @@ const handleGenerateAudio = async () => {
 }
 
 
-// Import AI instance check
-import { ai } from '@/ai/ai-instance';
-
 // Wrap HomeContent with Providers
 export default function Home() {
   return (
-      <AuthProvider> {/* AuthProvider should wrap everything */}
+      <AuthProvider> {/* Ensure AuthProvider wraps SidebarProvider or vice-versa consistently */}
           <SidebarProvider>
               <HomeContent />
           </SidebarProvider>
@@ -960,4 +966,3 @@ export default function Home() {
   );
 }
 
-    
