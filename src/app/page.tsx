@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -13,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarInset,
 } from '@/components/ui/sidebar';
-import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle } from 'lucide-react';
+import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -41,54 +40,72 @@ export default function Home() {
   const [isPausedState, setIsPausedState] = useState(false);
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
+  const [viewMode, setViewMode] = useState<'library' | 'reader'>('library'); // 'library' or 'reader'
   const { toast } = useToast();
 
-  const addBook = useCallback((fileName: string, textContent: string) => {
+ const addBook = useCallback((fileName: string, textContent: string) => {
     const newBook: BookItem = {
       id: Date.now().toString(),
       name: fileName,
       content: textContent,
     };
     setBooks((prevBooks) => {
-       // Prevent adding duplicates based on name and content length (basic check)
-       if (prevBooks.some(book => book.name === fileName && book.content.length === textContent.length)) {
-         toast({
-           variant: "default",
-           title: "Duplicate File",
-           description: `${fileName} already exists in your library.`,
-         });
-         return prevBooks;
-       }
-       const updatedBooks = [...prevBooks, newBook];
-       // Automatically select the newly added book
-       setSelectedBook(newBook);
-       // Reset states for the new book
-       setIsPlaying(false);
-       setIsPausedState(false);
-       setSummaryState({ loading: false, data: null, error: null });
-       setQuizState({ loading: false, data: null, error: null });
-       stopSpeech(); // Stop any ongoing speech
-       return updatedBooks;
-     });
-  }, [toast]); // Add toast as dependency
+      // Prevent adding duplicates based on name and content length (basic check)
+      if (prevBooks.some(book => book.name === fileName && book.content.length === textContent.length)) {
+        toast({
+          variant: "default",
+          title: "Duplicate File",
+          description: `${fileName} already exists in your library.`,
+        });
+        return prevBooks;
+      }
+      const updatedBooks = [...prevBooks, newBook];
+      // Don't automatically select or switch view
+      // setSelectedBook(newBook);
+      // setViewMode('reader');
+      // Reset states for the new book
+      setIsPlaying(false);
+      setIsPausedState(false);
+      setSummaryState({ loading: false, data: null, error: null });
+      setQuizState({ loading: false, data: null, error: null });
+      stopSpeech(); // Stop any ongoing speech
+       toast({
+          title: "Book Added",
+          description: `${fileName} added to your library.`,
+        });
+      return updatedBooks;
+    });
+  }, [toast]);
 
 
   const handleSelectBook = (book: BookItem) => {
     if (selectedBook?.id !== book.id) {
-      stopSpeech();
-      setSelectedBook(book);
-      setIsPlaying(false);
-      setIsPausedState(false);
-      // Reset AI states when book changes
-      setSummaryState({ loading: false, data: null, error: null });
-      setQuizState({ loading: false, data: null, error: null });
-    } else {
-      setSelectedBook(book); // Ensure selection even if clicked again
+      stopSpeech(); // Stop speech if changing books
+    }
+    setSelectedBook(book);
+    setViewMode('reader'); // Switch to reader view when a book is selected
+    // Reset states only if it's a *different* book being selected for reading
+    if (selectedBook?.id !== book.id) {
+        setIsPlaying(false);
+        setIsPausedState(false);
+        setSummaryState({ loading: false, data: null, error: null });
+        setQuizState({ loading: false, data: null, error: null });
     }
   };
 
+  const handleGoBackToLibrary = () => {
+    stopSpeech(); // Stop speech when leaving reader
+    setSelectedBook(null); // Deselect book
+    setViewMode('library'); // Switch back to library view
+     setIsPlaying(false);
+     setIsPausedState(false);
+     setSummaryState({ loading: false, data: null, error: null }); // Reset AI state
+     setQuizState({ loading: false, data: null, error: null }); // Reset AI state
+  };
+
+
   const handlePlay = () => {
-    if (!selectedBook) return;
+    if (!selectedBook?.content) return;
 
     if (isPausedState) {
       resumeSpeech();
@@ -134,28 +151,40 @@ export default function Home() {
 
   // --- Genkit Flow Handlers ---
 
-  const handleSummarize = async () => {
+ const handleSummarize = async () => {
     if (!selectedBook?.content) return;
 
     setSummaryState({ loading: true, data: null, error: null });
     try {
       const result = await summarizeAudiobookChapter({ chapterText: selectedBook.content });
       setSummaryState({ loading: false, data: result, error: null });
-       toast({
-         title: "Summary Generated",
-         description: "Chapter summary created successfully.",
-       });
+      toast({
+        title: "Summary Generated",
+        description: "Chapter summary created successfully.",
+      });
     } catch (error) {
-      console.error("Error generating summary (client-side):", error); // Log the full error object
+      console.error("Error generating summary (client-side):", error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      setSummaryState({ loading: false, data: null, error: `Failed to generate summary: ${errorMessage}` });
+      let userFriendlyMessage = `Failed to generate summary. ${errorMessage}`;
+
+      // Provide more specific hints for common issues
+      if (errorMessage.includes('API key not valid')) {
+        userFriendlyMessage = "Failed to generate summary: Invalid API key. Please check your GOOGLE_GENAI_API_KEY in the .env file.";
+      } else if (errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error')) {
+        userFriendlyMessage = "Failed to generate summary: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
+      } else if (errorMessage.includes('Invalid input')) {
+         userFriendlyMessage = `Failed to generate summary: ${errorMessage}`; // Show specific validation error
+      }
+
+      setSummaryState({ loading: false, data: null, error: userFriendlyMessage });
       toast({
         variant: "destructive",
         title: "Summarization Failed",
-        description: `Could not generate summary. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : errorMessage.includes('server error') ? 'Error reaching server.' : 'Check console for details.'}`,
+        description: userFriendlyMessage,
       });
     }
   };
+
 
   const handleGenerateQuiz = async () => {
     if (!selectedBook?.content) return;
@@ -164,29 +193,43 @@ export default function Home() {
     try {
       const result = await generateQuizQuestions({ text: selectedBook.content, numQuestions: 5 }); // Generate 5 questions
       setQuizState({ loading: false, data: result, error: null });
-      toast({
+       toast({
          title: "Quiz Generated",
          description: "Quiz questions created successfully.",
        });
     } catch (error) {
-      console.error("Error generating quiz (client-side):", error); // Log the full error object
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      setQuizState({ loading: false, data: null, error: `Failed to generate quiz: ${errorMessage}` });
+        console.error("Error generating quiz (client-side):", error);
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+        let userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`;
+
+        // Provide more specific hints for common issues
+        if (errorMessage.includes('API key not valid')) {
+            userFriendlyMessage = "Failed to generate quiz: Invalid API key. Please check your GOOGLE_GENAI_API_KEY in the .env file.";
+        } else if (errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error')) {
+            userFriendlyMessage = "Failed to generate quiz: Could not reach the AI server. Ensure the Genkit development server ('npm run genkit:dev') is running and there are no network issues.";
+        } else if (errorMessage.includes('Invalid input')) {
+            userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`; // Show specific validation error
+        } else if (errorMessage.includes('invalid quiz data')) {
+             userFriendlyMessage = `Failed to generate quiz: AI returned invalid data structure. ${errorMessage}`;
+        }
+
+
+      setQuizState({ loading: false, data: null, error: userFriendlyMessage });
       toast({
         variant: "destructive",
         title: "Quiz Generation Failed",
-        description: `Could not generate quiz. ${errorMessage.includes('API key not valid') ? 'Please check your API key.' : errorMessage.includes('server error') ? 'Error reaching server.' : 'Check console for details.'}`,
+        description: userFriendlyMessage,
       });
     }
   };
 
 
-  // Effect to handle component unmount or selected book change
+  // Effect to handle component unmount or view change
   useEffect(() => {
     return () => {
       stopSpeech();
     };
-  }, [selectedBook]);
+  }, [viewMode]); // Stop speech if view changes
 
    // Effect to poll speech state (basic approach)
    useEffect(() => {
@@ -208,62 +251,93 @@ export default function Home() {
 
   return (
     <SidebarProvider>
-      <Sidebar collapsible="icon"> {/* Enable icon collapsing */}
-        <SidebarHeader className="items-center border-b border-sidebar-border">
-          <div className="flex items-center gap-2">
-             <Book className="h-6 w-6 text-primary" />
-             {/* Hide title when collapsed */}
-             <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
-          </div>
-          <div className="ml-auto flex items-center gap-2 md:hidden">
-            <SidebarTrigger />
-          </div>
-        </SidebarHeader>
-        <SidebarContent className="p-0"> {/* Remove default padding */}
-           <div className="p-4"> {/* Add padding back */}
-             <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Bookshelf</p> {/* Hide label when collapsed */}
-             {books.length === 0 ? (
-                <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
-                  Upload a file to start.
-                </div>
-             ) : (
-               <ul className="space-y-1">
-                 {books.map((book) => (
-                   <li key={book.id}>
-                     <Button
-                       variant={selectedBook?.id === book.id ? "secondary" : "ghost"}
-                       className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
-                       onClick={() => handleSelectBook(book)}
-                       title={book.name} // Show full name on hover
-                     >
-                       <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                       <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
-                     </Button>
-                   </li>
-                 ))}
-               </ul>
-             )}
+      {/* Sidebar remains consistent */}
+      <Sidebar collapsible="icon">
+         <SidebarHeader className="items-center border-b border-sidebar-border">
+           <div className="flex items-center gap-2">
+              <Book className="h-6 w-6 text-primary" />
+              <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
            </div>
-        </SidebarContent>
-        <SidebarFooter className="border-t border-sidebar-border p-4">
-           <FileUpload onUploadSuccess={addBook} />
-        </SidebarFooter>
-      </Sidebar>
+           <div className="ml-auto flex items-center gap-2 md:hidden">
+             <SidebarTrigger />
+           </div>
+         </SidebarHeader>
+         <SidebarContent className="p-0">
+             {/* Always show the library list in the sidebar */}
+            <div className="p-4">
+              <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Bookshelf</p>
+              {books.length === 0 ? (
+                 <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                   Upload a file to start.
+                 </div>
+              ) : (
+                <ul className="space-y-1">
+                  {books.map((book) => (
+                    <li key={book.id}>
+                      <Button
+                        variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"} // Highlight only if selected AND in reader view
+                        className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
+                        onClick={() => handleSelectBook(book)}
+                        title={book.name} // Show full name on hover
+                      >
+                        <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
+                        <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+         </SidebarContent>
+         <SidebarFooter className="border-t border-sidebar-border p-4">
+            <FileUpload onUploadSuccess={addBook} />
+         </SidebarFooter>
+       </Sidebar>
+
+      {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
          <header className="flex h-14 items-center gap-4 border-b bg-card px-6 md:hidden">
-            <SidebarTrigger />
+            {/* Show back button in reader view on mobile, otherwise show sidebar trigger */}
+            {viewMode === 'reader' ? (
+                 <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
+                     <ArrowLeft className="h-5 w-5" />
+                 </Button>
+             ) : (
+                 <SidebarTrigger />
+             )}
             <div className="flex items-center gap-2">
                <Book className="h-6 w-6 text-primary" />
                <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
             </div>
          </header>
         <main className="flex flex-1 flex-col items-stretch p-6 overflow-hidden">
-          {selectedBook ? (
+          {/* Conditional Rendering based on viewMode */}
+          {viewMode === 'library' && (
+             <div className="flex flex-1 flex-col items-center justify-center text-center">
+                <Book size={48} className="text-muted-foreground mb-4" />
+                <h2 className="text-2xl font-semibold mb-2">Welcome to AudioBook Buddy</h2>
+                <p className="text-muted-foreground mb-6 max-w-md">
+                  Upload a PDF or ePUB file to start listening and get AI insights. Select a book from your bookshelf in the sidebar to begin reading.
+                </p>
+                 {books.length === 0 && ( // Show upload button only if library is empty in this view
+                    <FileUpload buttonVariant="default" buttonSize="lg" onUploadSuccess={addBook} />
+                 )}
+             </div>
+          )}
+
+          {viewMode === 'reader' && selectedBook && (
             <div className="flex flex-1 flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full">
+               {/* Back Button (Desktop) */}
+                <div className="hidden md:flex absolute top-6 left-6 z-10">
+                     <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
+                         <ArrowLeft className="h-5 w-5" />
+                     </Button>
+                 </div>
+
               {/* Book Content Area */}
-              <Card className="flex flex-col flex-1 lg:w-2/3 shadow-md">
-                <CardHeader className="border-b">
-                  <CardTitle className="truncate">{selectedBook.name}</CardTitle>
+              <Card className="flex flex-col flex-1 lg:w-2/3 shadow-md relative pt-10 md:pt-0"> {/* Add padding top for mobile header or button space */}
+                 <CardHeader className="border-b pt-4 pb-4 md:pt-6 md:pb-6"> {/* Adjust padding */}
+                    <CardTitle className="truncate">{selectedBook.name}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 p-4 overflow-hidden">
                   <ScrollArea className="h-full pr-4">
@@ -291,6 +365,7 @@ export default function Home() {
                   >
                     <Square className="h-5 w-5" />
                   </Button>
+                  {/* Removed Convert to Audio button as TTS starts on Play */}
                 </CardFooter>
               </Card>
 
@@ -301,14 +376,14 @@ export default function Home() {
                 </CardHeader>
                 <CardContent className="flex-1 p-4 overflow-hidden">
                   <ScrollArea className="h-full pr-4">
-                    <Accordion type="single" collapsible className="w-full">
+                    <Accordion type="single" collapsible className="w-full" defaultValue="summary">
                       {/* Summary Section */}
                       <AccordionItem value="summary">
                         <AccordionTrigger>
-                          <div className="flex items-center gap-2">
-                            <Lightbulb className="h-5 w-5" />
-                            <span>Chapter Summary</span>
-                            {summaryState.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                          <div className="flex items-center gap-2 w-full">
+                            <Lightbulb className="h-5 w-5 flex-shrink-0" />
+                            <span className="flex-grow text-left">Chapter Summary</span>
+                            {summaryState.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />}
                           </div>
                         </AccordionTrigger>
                         <AccordionContent>
@@ -330,10 +405,10 @@ export default function Home() {
                       {/* Quiz Section */}
                       <AccordionItem value="quiz">
                         <AccordionTrigger>
-                           <div className="flex items-center gap-2">
-                            <HelpCircle className="h-5 w-5" />
-                            <span>Quick Quiz</span>
-                            {quizState.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                           <div className="flex items-center gap-2 w-full">
+                            <HelpCircle className="h-5 w-5 flex-shrink-0" />
+                            <span className="flex-grow text-left">Quick Quiz</span>
+                            {quizState.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />}
                           </div>
                         </AccordionTrigger>
                         <AccordionContent>
@@ -372,19 +447,9 @@ export default function Home() {
                 </CardContent>
               </Card>
             </div>
-          ) : (
-             <div className="flex flex-1 flex-col items-center justify-center text-center">
-                <Book size={48} className="text-muted-foreground mb-4" />
-                <h2 className="text-2xl font-semibold mb-2">Welcome to AudioBook Buddy</h2>
-                <p className="text-muted-foreground mb-6 max-w-md">
-                    Upload a PDF or ePUB file using the button below or in the sidebar to start listening and get AI insights.
-                </p>
-                <FileUpload buttonVariant="default" buttonSize="lg" onUploadSuccess={addBook} />
-             </div>
           )}
         </main>
       </SidebarInset>
     </SidebarProvider>
   );
 }
-
