@@ -58,23 +58,43 @@ export function FileUpload({
       const textContent = await convertFileToText(file);
       console.log('Extracted text length:', textContent.length);
 
-      toast({
-        title: "Processing Successful",
-        description: `Text extracted from ${file.name}.`,
-      });
+      // Check if the extraction returned a specific message (like non-support or empty content)
+       if (textContent.startsWith("File type") || textContent.startsWith("No text content")) {
+            toast({
+                variant: "default", // Use default variant for informational messages
+                title: "Processing Info",
+                description: textContent, // Show the message from the service
+            });
+            // Optionally call onUploadSuccess if you want to add unsupported/empty files to the library
+             // if (onUploadSuccess) {
+             //   onUploadSuccess(file.name, textContent); // Pass the informational message as content
+             // }
+       } else {
+            toast({
+                title: "Processing Successful",
+                description: `Text extracted from ${file.name}.`,
+            });
 
-      // Call the success callback with the file name and text content
-      if (onUploadSuccess) {
-        onUploadSuccess(file.name, textContent);
-      }
+            // Call the success callback with the file name and actual text content
+            if (onUploadSuccess) {
+                onUploadSuccess(file.name, textContent);
+            }
+       }
 
-    } catch (error) {
-      console.error("Error processing file:", error);
-      toast({
-        variant: "destructive",
-        title: "Processing Failed",
-        description: "There was an error extracting text from your file. Please try again.",
-      });
+    } catch (error: unknown) { // Catch unknown
+        console.error("Error processing file (FileUpload component):", error);
+        // Provide more specific feedback based on the error message from convertFileToText
+        let errorMessage = "Could not extract text from the file.";
+        if (error instanceof Error) {
+            // Use the message from the thrown error, which should be more specific
+            errorMessage = error.message;
+        }
+
+        toast({
+            variant: "destructive",
+            title: "Processing Failed",
+            description: errorMessage, // Show the specific error
+        });
     } finally {
       setIsUploading(false);
        // Clear the input field after processing
