@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth, AuthProvider } from '@/contexts/AuthContext'; // Import useAuth and AuthProvider
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 import { db, auth } from '@/lib/firebase/clientApp'; // Import Firestore DB and Auth
 import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc, updateDoc } from 'firebase/firestore'; // Firestore functions
 import { FileUpload } from '@/components/feature/file-upload';
@@ -34,8 +34,8 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { signOut } from 'firebase/auth';
-// Import only the status flags, not the 'ai' instance itself to avoid server-side code in client component
-import { isAiInitialized, aiInitializationError } from '@/ai/ai-instance';
+// Removed direct import of AI status flags to avoid pulling server-side code into client component
+// import { isAiInitialized, aiInitializationError } from '@/ai/ai-instance';
 
 
 // Define a type for a book including its content and Firestore ID
@@ -309,14 +309,11 @@ function HomeContent() {
 
  const handleSummarize = async () => {
     if (!selectedBook?.content) return;
-    // Use the imported boolean flag and error message
-    if (!isAiInitialized) {
-        toast({ variant: "destructive", title: "AI Error", description: aiInitializationError || "AI service not initialized." });
-        return;
-    }
+    // Removed check for isAiInitialized as error handling is in the catch block
 
     setSummaryState({ loading: true, data: null, error: null });
     try {
+      // Call the server action (flow)
       const result = await summarizeAudiobookChapter({ chapterText: selectedBook.content });
       setSummaryState({ loading: false, data: result, error: null });
       toast({
@@ -328,14 +325,19 @@ function HomeContent() {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       let userFriendlyMessage = `Failed to generate summary. ${errorMessage}`;
 
-      // Check if the server provided a more specific message
-      if (errorMessage.includes('API key not valid') || errorMessage.includes('server error') || errorMessage.includes('Failed to fetch') || errorMessage.includes('network error') || errorMessage.includes('Invalid input') || errorMessage.includes('Billing account not configured')) {
+      // Check for specific error messages (including API key issues) from the server action
+       if (errorMessage.includes('API key not valid') ||
+           errorMessage.includes('AI service not initialized') ||
+           errorMessage.includes('server error') ||
+           errorMessage.includes('Failed to fetch') ||
+           errorMessage.includes('network error') ||
+           errorMessage.includes('Invalid input') ||
+           errorMessage.includes('Billing account not configured')) {
           userFriendlyMessage = errorMessage; // Use the specific error from the server
       } else {
           // Generic fallback
           userFriendlyMessage = "Failed to generate summary due to an unexpected error. Please check the console or Genkit server logs for details.";
       }
-
 
       setSummaryState({ loading: false, data: null, error: userFriendlyMessage });
       toast({
@@ -349,11 +351,7 @@ function HomeContent() {
 
   const handleGenerateQuiz = async () => {
     if (!selectedBook?.content) return;
-     // Use the imported boolean flag and error message
-     if (!isAiInitialized) {
-        toast({ variant: "destructive", title: "AI Error", description: aiInitializationError || "AI service not initialized." });
-        return;
-    }
+    // Removed check for isAiInitialized
 
     setQuizState({ loading: true, data: null, error: null });
     setUserAnswers({}); // Reset answers
@@ -366,7 +364,8 @@ function HomeContent() {
             numQuestions: 5 // Generate 5 questions
         };
       console.log("Requesting quiz generation with input:", input);
-      const result = await generateQuizQuestions(input); // Pass structured input
+      // Call the server action (flow)
+      const result = await generateQuizQuestions(input);
       console.log("Quiz generation result:", result);
       setQuizState({ loading: false, data: result, error: null });
        toast({
@@ -378,8 +377,9 @@ function HomeContent() {
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
         let userFriendlyMessage = `Failed to generate quiz: ${errorMessage}`; // Default to the raw error message
 
-        // Check if the error message provides specific details from the server
+        // Check for specific error messages (including API key issues) from the server action
         if (errorMessage.includes('API key not valid') ||
+            errorMessage.includes('AI service not initialized') ||
             errorMessage.includes('invalid quiz data format') ||
             errorMessage.includes('Network error:') ||
             errorMessage.includes('rate limit exceeded') ||
@@ -842,17 +842,18 @@ const handleGenerateAudio = async () => {
                         <AccordionContent>
                           {summaryState.error && <p className="text-sm text-destructive">{summaryState.error}</p>}
                           {summaryState.data && <p className="text-sm">{summaryState.data.summary}</p>}
-                          {!summaryState.loading && !summaryState.data && !summaryState.error && (
-                            <Button onClick={handleSummarize} size="sm" className="w-full" disabled={!selectedBook?.content || !isAiInitialized}>
-                              Generate Summary
-                            </Button>
-                          )}
-                           {summaryState.data && !summaryState.loading && (
-                              <Button onClick={handleSummarize} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !isAiInitialized}>
-                                Regenerate Summary
-                              </Button>
-                            )}
-                            {!isAiInitialized && <p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service Unavailable"}</p>}
+                          <Button
+                            onClick={handleSummarize}
+                            size="sm"
+                            className="w-full mt-2"
+                            disabled={!selectedBook?.content || summaryState.loading}
+                          >
+                            {summaryState.loading ? 'Generating...' : (summaryState.data ? 'Regenerate Summary' : 'Generate Summary')}
+                          </Button>
+                          {/* Display potential AI initialization errors here */}
+                           {summaryState.error && summaryState.error.includes('AI service not initialized') && (
+                                <p className="text-xs text-destructive mt-2 text-center">{summaryState.error}</p>
+                           )}
                         </AccordionContent>
                       </AccordionItem>
 
@@ -920,27 +921,34 @@ const handleGenerateAudio = async () => {
                                     </Button>
                                 )}
 
-                                {quizSubmitted && (
-                                    <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-4" disabled={quizState.loading || !selectedBook?.content || !isAiInitialized}>
-                                        Generate New Quiz
-                                    </Button>
-                                )}
+                                 <Button
+                                   onClick={handleGenerateQuiz}
+                                   size="sm"
+                                   variant={quizSubmitted || quizState.data ? "outline" : "default"}
+                                   className="w-full mt-2"
+                                   disabled={!selectedBook?.content || quizState.loading}
+                                 >
+                                   {quizState.loading ? 'Generating...' : 'Generate New Quiz'}
+                                 </Button>
                             </div>
                           )}
                            {quizState.data && quizState.data.questions.length === 0 && !quizState.loading &&(
                                <p className="text-sm text-muted-foreground">No quiz questions generated.</p>
                            )}
-                          {!quizState.loading && !quizState.data && !quizState.error && (
-                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.content || !isAiInitialized}>
-                              Generate Quiz
-                            </Button>
+                          {!quizState.data && !quizState.error && (
+                            <Button
+                               onClick={handleGenerateQuiz}
+                               size="sm"
+                               className="w-full"
+                               disabled={!selectedBook?.content || quizState.loading}
+                             >
+                               {quizState.loading ? 'Generating...' : 'Generate Quiz'}
+                             </Button>
                           )}
-                           {quizState.data && !quizSubmitted && !quizState.loading && (
-                              <Button onClick={handleGenerateQuiz} size="sm" variant="outline" className="w-full mt-2" disabled={!selectedBook?.content || !isAiInitialized}>
-                                Regenerate Quiz
-                              </Button>
-                            )}
-                             {!isAiInitialized && <p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service Unavailable"}</p>}
+                            {/* Display potential AI initialization errors here */}
+                           {quizState.error && quizState.error.includes('AI service not initialized') && (
+                                <p className="text-xs text-destructive mt-2 text-center">{quizState.error}</p>
+                           )}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
@@ -958,11 +966,9 @@ const handleGenerateAudio = async () => {
 // Wrap HomeContent with Providers
 export default function Home() {
   return (
-      <AuthProvider> {/* Ensure AuthProvider wraps SidebarProvider or vice-versa consistently */}
-          <SidebarProvider>
-              <HomeContent />
-          </SidebarProvider>
-      </AuthProvider>
+      // Removed AuthProvider wrapper here as it's in RootLayout
+      <SidebarProvider>
+          <HomeContent />
+      </SidebarProvider>
   );
 }
-
