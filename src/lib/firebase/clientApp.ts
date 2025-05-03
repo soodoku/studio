@@ -1,3 +1,4 @@
+
 // src/lib/firebase/clientApp.ts
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth, connectAuthEmulator } from "firebase/auth";
@@ -14,7 +15,7 @@ interface FirebaseConfig {
   measurementId?: string;
 }
 
-// Read environment variables
+// Read environment variables - These are expected to be injected by Firebase Studio
 const firebaseConfig: FirebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -34,18 +35,18 @@ let initError: string | null = null; // Store initialization error message
 
 // --- Perform checks and initialization only on the client-side ---
 if (typeof window !== 'undefined') {
-  // Check for missing or placeholder values
+  // Check for missing or placeholder values provided by the environment
   if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
-    initError = "CRITICAL: Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is the placeholder 'YOUR_API_KEY'. Update .env.local.";
+    initError = "CRITICAL: Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is the placeholder 'YOUR_API_KEY'. Update .env.local or check Firebase Studio environment configuration.";
     firebaseConfigValid = false;
   } else if (!firebaseConfig.authDomain || firebaseConfig.authDomain === "YOUR_AUTH_DOMAIN") {
-    initError = "CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder 'YOUR_AUTH_DOMAIN'. Update .env.local.";
+    initError = "CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder 'YOUR_AUTH_DOMAIN'. Update .env.local or check Firebase Studio environment configuration.";
     firebaseConfigValid = false;
   } else if (!firebaseConfig.projectId || firebaseConfig.projectId === "YOUR_PROJECT_ID") {
-    initError = "CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder 'YOUR_PROJECT_ID'. Update .env.local.";
+    initError = "CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing or is the placeholder 'YOUR_PROJECT_ID'. Update .env.local or check Firebase Studio environment configuration.";
     firebaseConfigValid = false;
   } else if (!firebaseConfig.appId || firebaseConfig.appId === "YOUR_APP_ID") {
-    initError = "CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder 'YOUR_APP_ID'. Update .env.local.";
+    initError = "CRITICAL: Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing or is the placeholder 'YOUR_APP_ID'. Update .env.local or check Firebase Studio environment configuration.";
     firebaseConfigValid = false;
   }
   // Add more checks if other variables are essential (e.g., storageBucket)
@@ -54,6 +55,7 @@ if (typeof window !== 'undefined') {
   if (firebaseConfigValid) {
     if (!getApps().length) {
       try {
+        // Initialize with the config read from the environment
         app = initializeApp(firebaseConfig as any); // Cast needed as TS might complain about optional fields
         console.log("Firebase initialized successfully.");
       } catch (error) {
@@ -73,6 +75,7 @@ if (typeof window !== 'undefined') {
         auth = getAuth(app);
         // --- Optional: Emulators for development ---
         // Determine if running in development and if emulators should be used
+        // Firebase Studio typically doesn't use local emulators by default, but check env var if needed.
         const useEmulators = process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true';
 
         if (useEmulators) {
@@ -83,18 +86,15 @@ if (typeof window !== 'undefined') {
             const firestorePort = parseInt(process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_PORT || "8080", 10);
 
             console.log(`Connecting to Firebase Auth Emulator at http://${authHost}:${authPort}`);
-            // Check if already connected to avoid re-connecting error in HMR
             if (!('_emulatorHostAndPort' in auth) || !auth._emulatorHostAndPort) {
                 connectAuthEmulator(auth, `http://${authHost}:${authPort}`, { disableWarnings: true });
             } else {
                 console.log("Auth Emulator already connected.");
             }
 
-            // Initialize Firestore *before* connecting emulator
             db = getFirestore(app);
             console.log(`Connecting to Firebase Firestore Emulator at ${firestoreHost}:${firestorePort}`);
-             // Check if already connected
-            if (!db._settings.host.includes(firestoreHost)) {
+            if (!db.toJSON().settings.host?.includes(firestoreHost)) { // Check if already connected
                 connectFirestoreEmulator(db, firestoreHost, firestorePort);
             } else {
                  console.log("Firestore Emulator already connected.");
@@ -124,7 +124,8 @@ if (typeof window !== 'undefined') {
     app = null;
     auth = null;
     db = null;
-    console.error(`Firebase configuration is invalid. ${initError || 'Missing or placeholder values in .env.local.'} Firebase services (Auth, Firestore) will not be available.`);
+    // Log the specific initError found during checks
+    console.error(`Firebase configuration is invalid. ${initError || 'Missing or placeholder values.'} Firebase services (Auth, Firestore) will not be available.`);
   }
 } else {
   // Server-side rendering or other non-browser environments: app, auth, db remain null
@@ -132,4 +133,5 @@ if (typeof window !== 'undefined') {
 }
 
 // Export the instances (which will be null if config is invalid or on server)
+// Also export the validation status and any initialization error
 export { app, auth, db, firebaseConfigValid, initError };

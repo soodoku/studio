@@ -1,9 +1,11 @@
+
 // src/contexts/AuthContext.tsx
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth, firebaseConfigValid, initError } from '@/lib/firebase/clientApp'; // Import validation status and error
+// Import firebaseConfigValid and initError along with auth instance
+import { auth, firebaseConfigValid, initError } from '@/lib/firebase/clientApp';
 import { Loader2 } from 'lucide-react'; // For loading state
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // For error display
 import { Terminal } from 'lucide-react'; // Icon for alert
@@ -11,7 +13,7 @@ import { Terminal } from 'lucide-react'; // Icon for alert
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  authError: string | null; // Add state to hold potential auth init errors
+  authError: string | null; // Holds initialization or auth state errors
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -26,50 +28,58 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true); // Start loading until auth state is determined
-  const [authError, setAuthError] = useState<string | null>(initError); // Initialize with error from firebaseClientApp
+  // Initialize loading to true only if config is potentially valid
+  const [loading, setLoading] = useState(firebaseConfigValid);
+  // Initialize authError state with the error potentially captured during clientApp initialization
+  const [authError, setAuthError] = useState<string | null>(initError);
 
   useEffect(() => {
     // This effect runs only on the client side after mount.
 
-    // If Firebase config was invalid from the start, stop loading and show error.
+    // If Firebase config was invalid from the start (checked in clientApp.ts),
+    // set loading to false and ensure the error is set. No need to proceed.
     if (!firebaseConfigValid) {
         setLoading(false);
-        // Error is already set via useState(initError)
+        // The error message is already set in the initial state via initError
         console.warn("AuthContext: Firebase configuration invalid, cannot listen for auth changes.");
-        return; // Don't proceed to setup listener
+        return; // Don't setup listener
     }
 
-    // Check if the Firebase Auth instance was successfully initialized (is not null)
-    if (auth) {
-      // Listen for authentication state changes
-      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-        setUser(currentUser);
-        setLoading(false); // Auth state resolved, stop loading
-        setAuthError(null); // Clear any previous errors on successful state change
-        console.log("Auth State Changed:", currentUser ? `User: ${currentUser.uid}` : "No User");
-      }, (error) => {
-          // Handle errors during the subscription itself (less common)
-          console.error("Auth state listener error:", error);
-          setAuthError(`Error listening for authentication changes: ${error.message}`);
-          setUser(null);
-          setLoading(false);
-      });
-
-      // Cleanup subscription on unmount
-      return () => unsubscribe();
-    } else {
-      // Handle the case where the auth instance is null even if config seemed valid initially (unexpected)
-      console.error("AuthContext: Firebase Auth instance is unexpectedly null despite config seeming valid.");
-      setAuthError("Authentication service failed to initialize unexpectedly.");
-      setLoading(false); // Stop loading as auth state cannot be determined
-      setUser(null); // Ensure user is null
-      // No cleanup function needed as no listener was attached.
-      return undefined;
+    // At this point, config seemed valid initially. Now check if 'auth' instance is available.
+    // It might be null if initialization failed *after* the initial config check.
+    if (!auth) {
+        // If auth is null even though config *seemed* valid, set an error.
+        setAuthError(prevError => prevError || "Authentication service failed to initialize unexpectedly.");
+        setLoading(false);
+        setUser(null);
+        console.error("AuthContext: Firebase Auth instance is unexpectedly null.");
+        return; // Don't setup listener
     }
-  }, []); // Empty dependency array ensures this runs once on mount
 
-  // Show loading indicator while determining auth state OR if auth failed init.
+    // If config was valid AND auth instance exists, setup the listener.
+    setLoading(true); // Ensure loading is true while waiting for the first auth state
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false); // Auth state resolved, stop loading
+      setAuthError(null); // Clear any previous errors on successful state change
+      console.log("Auth State Changed:", currentUser ? `User: ${currentUser.uid}` : "No User");
+    }, (error) => {
+        // Handle errors during the subscription itself
+        console.error("Auth state listener error:", error);
+        setAuthError(`Error listening for authentication changes: ${error.message}`);
+        setUser(null);
+        setLoading(false);
+    });
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+
+    // Run effect only once on mount
+  }, []);
+
+  // --- Render Logic ---
+
+  // 1. Show loading indicator while loading state is true.
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
@@ -79,8 +89,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     );
   }
 
-   // If there was an initialization error, show an error message instead of children
-   if (authError) {
+  // 2. If not loading, but there's an authError (from init or listener), show error message.
+  if (authError) {
      return (
        <div className="flex items-center justify-center min-h-screen p-4">
          <Alert variant="destructive" className="max-w-lg">
@@ -88,7 +98,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
            <AlertTitle>Authentication Unavailable</AlertTitle>
            <AlertDescription>
              Could not initialize the authentication service. Please ensure your Firebase configuration in{' '}
-             <code>.env.local</code> is correct and try refreshing the page.
+             {/* Mention Firebase Studio context */}
+             <code>Firebase Studio / .env.local</code> is correct and try refreshing the page.
              <br />
              <span className="text-xs mt-2 block">Details: {authError}</span>
            </AlertDescription>
@@ -97,7 +108,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
      );
    }
 
-  // Once loading is false and no errors, render children with the current user state.
+  // 3. If not loading and no errors, render children with the current user state.
   return (
     <AuthContext.Provider value={{ user, loading, authError }}>
       {children}
