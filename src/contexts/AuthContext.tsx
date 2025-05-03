@@ -40,7 +40,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } else {
       // Handle the case where the auth instance is null (e.g., config error, SSR)
       // We should stop loading and set user to null.
-      console.warn("Firebase Auth instance not available in AuthContext useEffect. Cannot listen for auth changes.");
+      console.warn("Firebase Auth instance not available in AuthContext useEffect. Cannot listen for auth changes. Check Firebase configuration in .env.local and src/lib/firebase/clientApp.ts.");
       setLoading(false);
       setUser(null);
       // No cleanup function needed as no listener was attached.
@@ -75,4 +75,3 @@ export const useAuth = () => {
   }
   return context;
 };
-
