@@ -19,7 +19,7 @@ let firebaseConfigValid = true; // Assume valid initially
 if (typeof window !== 'undefined') {
     if (!apiKey || apiKey === "YOUR_API_KEY") {
         console.error("CRITICAL: Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is missing or is still the placeholder value 'YOUR_API_KEY'. Firebase features will NOT work. Update .env.local.");
-        firebaseConfigValid = false; // Mark as invalid, but continue initialization attempt
+        firebaseConfigValid = false; // Mark as invalid
     }
     if (!authDomain || authDomain === "YOUR_AUTH_DOMAIN") {
         console.error("CRITICAL: Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing or is the placeholder. Update .env.local.");
@@ -53,59 +53,59 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 
 // Only attempt initialization on the client-side.
-// If config is invalid, it will likely fail gracefully during service initialization (getAuth, getFirestore).
 if (typeof window !== 'undefined') {
-    if (!firebaseConfigValid) {
-        console.warn("Attempting Firebase initialization with invalid or placeholder configuration. Firebase features will likely fail.");
-    }
-
-    if (!getApps().length) {
-        try {
-            // Attempt initialization even if config looks invalid, maybe user fixed it without refresh
-            app = initializeApp(firebaseConfig);
-             console.log("Firebase initialized attempt.");
-        } catch (error) {
-             console.error("Firebase initialization failed:", error);
-             // If init itself fails (e.g., invalid config format), ensure app is null.
-             app = null;
-             firebaseConfigValid = false; // Confirm invalidity if init fails
+    // Only initialize if the config is potentially valid
+    if (firebaseConfigValid) {
+        if (!getApps().length) {
+            try {
+                app = initializeApp(firebaseConfig);
+                console.log("Firebase initialized successfully.");
+            } catch (error) {
+                 console.error("Firebase initialization failed:", error);
+                 app = null; // Ensure app is null if init fails
+                 firebaseConfigValid = false; // Confirm invalidity
+            }
+        } else {
+            app = getApp();
+             console.log("Firebase app already exists.");
         }
 
+        // Initialize Auth and Firestore only if app was successfully initialized
+        if (app) {
+            try {
+                auth = getAuth(app);
+                // Example for using emulators during development (optional)
+                // if (process.env.NODE_ENV === 'development') {
+                //   console.log("Connecting to Firebase Auth Emulator");
+                //   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
+                // }
+            } catch (error) {
+                console.error("Failed to initialize Firebase Auth:", error);
+                auth = null; // Set auth to null if its initialization fails
+            }
+            try {
+                db = getFirestore(app);
+                 // Example for using emulators during development (optional)
+                // if (process.env.NODE_ENV === 'development') {
+                //   console.log("Connecting to Firebase Firestore Emulator");
+                //   connectFirestoreEmulator(db, 'localhost', 8080);
+                // }
+            } catch (error) {
+                console.error("Failed to initialize Firebase Firestore:", error);
+                db = null; // Set db to null if its initialization fails
+            }
+        } else {
+            // If app initialization failed, ensure auth and db are null
+             auth = null;
+             db = null;
+             console.error("Firebase app initialization failed earlier, skipping Auth and Firestore setup.");
+        }
     } else {
-        app = getApp();
-         console.log("Firebase app already exists.");
-    }
-
-    // Initialize Auth and Firestore only if app exists
-    // These might fail later if the config values (like API key) are truly invalid.
-    if (app) {
-        try {
-            auth = getAuth(app);
-            // Example for using emulators during development (optional)
-            // if (process.env.NODE_ENV === 'development') {
-            //   console.log("Connecting to Firebase Auth Emulator");
-            //   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
-            // }
-        } catch (error) {
-            console.error("Failed to initialize Firebase Auth:", error);
-            auth = null;
-        }
-        try {
-            db = getFirestore(app);
-             // Example for using emulators during development (optional)
-            // if (process.env.NODE_ENV === 'development') {
-            //   console.log("Connecting to Firebase Firestore Emulator");
-            //   connectFirestoreEmulator(db, 'localhost', 8080);
-            // }
-        } catch (error) {
-            console.error("Failed to initialize Firebase Firestore:", error);
-            db = null;
-        }
-    } else {
-         // If app initialization failed, ensure auth and db are null
-         auth = null;
-         db = null;
-         console.error("Firebase app initialization failed, skipping Auth and Firestore setup.");
+        // Config was deemed invalid from the start
+        app = null;
+        auth = null;
+        db = null;
+        console.error("Firebase configuration is invalid (missing or placeholder values in .env.local). Firebase services (Auth, Firestore) will not be available.");
     }
 
 } else {
