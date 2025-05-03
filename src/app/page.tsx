@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { speakText, pauseSpeech, resumeSpeech, stopSpeech, isCurrentlySpeaking, isCurrentlyPaused } from '@/services/tts';
+import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts'; // Removed isCurrentlySpeaking, isCurrentlyPaused imports
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
 import { generateQuizQuestions, type GenerateQuizQuestionsOutput } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
@@ -60,27 +60,31 @@ export default function Home() {
         return prevBooks;
       }
       const updatedBooks = [...prevBooks, newBook];
-      // Don't automatically select or switch view
-      // setSelectedBook(newBook);
-      // setViewMode('reader');
-      // Reset states for the new book
-      setIsPlaying(false);
-      setIsPausedState(false);
-      setSummaryState({ loading: false, data: null, error: null });
-      setQuizState({ loading: false, data: null, error: null });
-      stopSpeech(); // Stop any ongoing speech
        toast({
           title: "Book Added",
           description: `${fileName} added to your library.`,
         });
       return updatedBooks;
     });
+     // Stay in library view after adding
+     setViewMode('library');
+     // Ensure states are reset properly when adding a new book, regardless of current view
+     setIsPlaying(false);
+     setIsPausedState(false);
+     // Don't reset summary/quiz if user is already viewing another book's AI results
+     // setSummaryState({ loading: false, data: null, error: null });
+     // setQuizState({ loading: false, data: null, error: null });
+     if (typeof window !== 'undefined' && window.speechSynthesis) {
+        stopSpeech(); // Stop any ongoing speech only if TTS is available
+     }
   }, [toast]);
 
 
   const handleSelectBook = (book: BookItem) => {
     if (selectedBook?.id !== book.id) {
-      stopSpeech(); // Stop speech if changing books
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        stopSpeech(); // Stop speech if changing books
+      }
     }
     setSelectedBook(book);
     setViewMode('reader'); // Switch to reader view when a book is selected
@@ -94,21 +98,35 @@ export default function Home() {
   };
 
   const handleGoBackToLibrary = () => {
-    stopSpeech(); // Stop speech when leaving reader
+     if (typeof window !== 'undefined' && window.speechSynthesis) {
+        stopSpeech(); // Stop speech when leaving reader
+     }
     setSelectedBook(null); // Deselect book
     setViewMode('library'); // Switch back to library view
      setIsPlaying(false);
      setIsPausedState(false);
-     setSummaryState({ loading: false, data: null, error: null }); // Reset AI state
-     setQuizState({ loading: false, data: null, error: null }); // Reset AI state
+     // Reset AI states when going back to library explicitly
+     setSummaryState({ loading: false, data: null, error: null });
+     setQuizState({ loading: false, data: null, error: null });
   };
 
 
   const handlePlay = () => {
     if (!selectedBook?.content) return;
 
+     if (typeof window === 'undefined' || !window.speechSynthesis) {
+         toast({
+            variant: "destructive",
+            title: "TTS Not Supported",
+            description: "Text-to-speech is not available in your browser.",
+         });
+        return;
+    }
+
     if (isPausedState) {
       resumeSpeech();
+      // State update handled by resumeSpeech's internal logic (if onresume fires reliably)
+      // Or optimistically:
       setIsPlaying(true);
       setIsPausedState(false);
     } else if (!isPlaying) {
@@ -128,25 +146,50 @@ export default function Home() {
              title: "Speech Error",
              description: "Could not play audio. Please try again.",
            });
-        }
+        },
+        // onStart callback
+        () => {
+             setIsPlaying(true);
+             setIsPausedState(false);
+             console.log('Playback started via callback');
+        },
+         // onPause callback (optional, can rely on handlePause)
+         () => {
+            setIsPlaying(false);
+            setIsPausedState(true);
+            console.log('Playback paused via callback');
+         },
+         // onResume callback (optional, can rely on handlePlay/resumeSpeech)
+         () => {
+             setIsPlaying(true);
+             setIsPausedState(false);
+             console.log('Playback resumed via callback');
+         }
+
       );
-      setIsPlaying(true);
-      setIsPausedState(false);
+      // Optimistic update (consider relying solely on onStart if needed)
+      // setIsPlaying(true);
+      // setIsPausedState(false);
     }
   };
 
   const handlePause = () => {
-    if (isPlaying) {
+    if (isPlaying && typeof window !== 'undefined' && window.speechSynthesis) {
       pauseSpeech();
-      setIsPlaying(false);
-      setIsPausedState(true);
+       // Optimistic update (consider relying on onPause callback)
+       setIsPlaying(false);
+       setIsPausedState(true);
     }
   };
 
   const handleStop = () => {
-    stopSpeech();
-    setIsPlaying(false);
-    setIsPausedState(false);
+     if (typeof window !== 'undefined' && window.speechSynthesis) {
+        stopSpeech();
+        // TTS stopSpeech will trigger onEnd, which resets state.
+        // Or optimistically:
+        setIsPlaying(false);
+        setIsPausedState(false);
+     }
   };
 
   // --- Genkit Flow Handlers ---
@@ -227,26 +270,14 @@ export default function Home() {
   // Effect to handle component unmount or view change
   useEffect(() => {
     return () => {
-      stopSpeech();
+      // Only stop speech if TTS is available
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+          stopSpeech();
+      }
     };
-  }, [viewMode]); // Stop speech if view changes
+  }, [viewMode]); // Stop speech if view changes (and potentially on unmount)
 
-   // Effect to poll speech state (basic approach)
-   useEffect(() => {
-     const interval = setInterval(() => {
-       // Check if window and speech synthesis are available before polling
-       if (typeof window !== 'undefined' && window.speechSynthesis) {
-         const currentSpeaking = isCurrentlySpeaking();
-         const currentPaused = isCurrentlyPaused();
-         // Update state only if it differs from the polled state
-         // Use functional updates to avoid stale state issues
-         setIsPlaying(prev => (prev !== currentSpeaking ? currentSpeaking : prev));
-         setIsPausedState(prev => (prev !== currentPaused ? currentPaused : prev));
-       }
-     }, 500); // Check every 500ms
-
-     return () => clearInterval(interval);
-   }, []); // Run only once on mount
+   // REMOVED Polling useEffect for TTS state
 
 
   return (
