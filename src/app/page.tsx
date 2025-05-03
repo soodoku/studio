@@ -2,6 +2,10 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth hook
+import { db, auth } from '@/lib/firebase/clientApp'; // Import Firestore DB and Auth
+import { collection, addDoc, query, where, getDocs, doc, onSnapshot, orderBy, deleteDoc } from 'firebase/firestore'; // Firestore functions
 import { FileUpload } from '@/components/feature/file-upload';
 import {
   SidebarProvider,
@@ -11,27 +15,34 @@ import {
   SidebarFooter,
   SidebarTrigger,
   SidebarInset,
-  useSidebar // Import useSidebar hook
+  useSidebar,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
 } from '@/components/ui/sidebar';
-import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X } from 'lucide-react';
+import { Book, Play, Pause, Square, Loader2, Lightbulb, HelpCircle, ArrowLeft, Check, X, LogOut, Trash2, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Label } from "@/components/ui/label"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
 import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput, type Question } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils'; // Import cn for conditional classNames
+import { cn } from '@/lib/utils';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { signOut } from 'firebase/auth';
 
 
-// Define a type for a book including its content
+// Define a type for a book including its content and Firestore ID
 interface BookItem {
-  id: string;
+  id: string; // Firestore document ID
+  userId: string; // Firebase Auth User ID
   name: string;
   content: string; // Full text content
+  createdAt: Date; // Timestamp for ordering
 }
 
 // Define types for AI generated content
@@ -39,12 +50,14 @@ type SummaryState = { loading: boolean; data: SummarizeAudiobookChapterOutput | 
 type QuizState = { loading: boolean; data: GenerateQuizQuestionsOutput | null; error: string | null };
 type UserAnswers = { [questionIndex: number]: string };
 
-
-// Moved HomeContent outside to access useSidebar hook
+// Moved HomeContent outside to access useSidebar and useAuth hooks
 function HomeContent() {
   const { isMobile } = useSidebar(); // Access isMobile state from context
+  const { user, loading: authLoading } = useAuth(); // Access user and loading state from AuthContext
+  const router = useRouter();
 
   const [books, setBooks] = useState<BookItem[]>([]);
+  const [booksLoading, setBooksLoading] = useState(true); // Separate loading state for books
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPausedState, setIsPausedState] = useState(false);
@@ -55,62 +68,122 @@ function HomeContent() {
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState<number | null>(null);
   const { toast } = useToast();
+  const [mounted, setMounted] = useState(false);
 
- const addBook = useCallback((fileName: string, textContent: string) => {
-    const newBook: BookItem = {
-      id: Date.now().toString(),
-      name: fileName,
-      content: textContent,
-    };
-    setBooks((prevBooks) => {
-      // Prevent adding duplicates based on name and content length (basic check)
-      if (prevBooks.some(book => book.name === fileName && book.content.length === textContent.length)) {
-        toast({
-          variant: "default",
-          title: "Duplicate File",
-          description: `${fileName} already exists in your library.`,
-        });
-        return prevBooks;
-      }
-      const updatedBooks = [...prevBooks, newBook];
-       toast({
-          title: "Book Added",
-          description: `${fileName} added to your library.`,
-        });
-      // Update local storage after adding a book
-      if (typeof window !== 'undefined') {
-          localStorage.setItem('audiobook_buddy_books', JSON.stringify(updatedBooks));
-      }
-      return updatedBooks;
-    });
-     // Stay in library view after adding
-     setViewMode('library');
-     // Ensure states are reset properly when adding a new book, regardless of current view
-     setIsPlaying(false);
-     setIsPausedState(false);
-     // Don't reset summary/quiz if user is already viewing another book's AI results
-     // setSummaryState({ loading: false, data: null, error: null });
-     // setQuizState({ loading: false, data: null, error: null });
-     if (typeof window !== 'undefined' && window.speechSynthesis) {
-        stopSpeech(); // Stop any ongoing speech only if TTS is available
-     }
-  }, [toast]);
 
-  // Load books from local storage on initial render
+  // Redirect to auth page if not logged in and auth is resolved
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        const storedBooks = localStorage.getItem('audiobook_buddy_books');
-        if (storedBooks) {
-            try {
-                const parsedBooks: BookItem[] = JSON.parse(storedBooks);
-                setBooks(parsedBooks);
-            } catch (e) {
-                console.error("Failed to parse books from local storage:", e);
-                localStorage.removeItem('audiobook_buddy_books'); // Clear invalid data
-            }
-        }
+    if (!authLoading && !user) {
+      router.push('/auth');
     }
-  }, []);
+  }, [user, authLoading, router]);
+
+   // Fetch books from Firestore for the logged-in user
+   useEffect(() => {
+    if (user) {
+      setBooksLoading(true); // Start loading books
+      const booksCollection = collection(db, 'books');
+      const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc')); // Order by creation time
+
+      // Use onSnapshot for real-time updates
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const userBooks = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          userId: doc.data().userId,
+          name: doc.data().name,
+          content: doc.data().content,
+          createdAt: doc.data().createdAt.toDate(), // Convert Firestore Timestamp to Date
+        })) as BookItem[];
+        setBooks(userBooks);
+        setBooksLoading(false); // Finish loading books
+        console.log("Books loaded:", userBooks.length);
+      }, (error) => {
+        console.error("Error fetching books:", error);
+        toast({ variant: "destructive", title: "Error Loading Books", description: "Could not fetch your bookshelf." });
+        setBooksLoading(false); // Finish loading even on error
+      });
+
+      // Cleanup listener on unmount or user change
+      return () => unsubscribe();
+    } else {
+      setBooks([]); // Clear books if no user
+      setBooksLoading(false); // Not loading if no user
+    }
+  }, [user, toast]); // Rerun when user changes
+
+
+   const addBook = useCallback(async (fileName: string, textContent: string) => {
+        if (!user) {
+            toast({ variant: "destructive", title: "Not Logged In", description: "You must be logged in to add books." });
+            return;
+        }
+
+        // Basic check for duplicates (can be improved)
+        if (books.some(book => book.name === fileName && book.content.length === textContent.length)) {
+            toast({
+            variant: "default",
+            title: "Duplicate File",
+            description: `${fileName} already exists in your library.`,
+            });
+            return;
+        }
+
+        try {
+            const booksCollection = collection(db, 'books');
+            const newBookData = {
+                userId: user.uid,
+                name: fileName,
+                content: textContent,
+                createdAt: new Date(), // Use JS Date, Firestore converts it
+            };
+            const docRef = await addDoc(booksCollection, newBookData);
+            console.log("Book added with ID: ", docRef.id);
+            toast({
+                title: "Book Added",
+                description: `${fileName} added to your library.`,
+            });
+            // No need to manually update state, onSnapshot will handle it
+            setViewMode('library'); // Stay in library view
+            // Reset player state if a book was playing
+            if (isPlaying || isPausedState) {
+                stopSpeech();
+                setIsPlaying(false);
+                setIsPausedState(false);
+            }
+        } catch (e) {
+            console.error("Error adding document: ", e);
+            toast({
+                variant: "destructive",
+                title: "Error Adding Book",
+                description: "Could not save the book to your library.",
+            });
+        }
+    }, [user, books, isPlaying, isPausedState, toast]); // Include books in dependencies for duplicate check
+
+    const deleteBook = async (bookId: string, bookName: string) => {
+        if (!user) return; // Should not happen if button is shown correctly
+
+        // If the book being deleted is currently selected, reset the view
+        if (selectedBook?.id === bookId) {
+             handleGoBackToLibrary(); // Reset view and stop speech
+        }
+
+        try {
+            await deleteDoc(doc(db, "books", bookId));
+            toast({
+                title: "Book Deleted",
+                description: `"${bookName}" removed from your library.`,
+            });
+            // onSnapshot will update the local state
+        } catch (error) {
+            console.error("Error deleting book:", error);
+            toast({
+                variant: "destructive",
+                title: "Deletion Failed",
+                description: `Could not delete "${bookName}".`,
+            });
+        }
+    };
 
 
   const handleSelectBook = (book: BookItem) => {
@@ -118,11 +191,7 @@ function HomeContent() {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         stopSpeech(); // Stop speech if changing books
       }
-    }
-    setSelectedBook(book);
-    setViewMode('reader'); // Switch to reader view when a book is selected
-    // Reset states only if it's a *different* book being selected for reading
-    if (selectedBook?.id !== book.id) {
+       // Reset states only if it's a *different* book being selected for reading
         setIsPlaying(false);
         setIsPausedState(false);
         setSummaryState({ loading: false, data: null, error: null });
@@ -131,6 +200,8 @@ function HomeContent() {
         setQuizSubmitted(false);
         setQuizScore(null);
     }
+    setSelectedBook(book);
+    setViewMode('reader'); // Switch to reader view when a book is selected
   };
 
   const handleGoBackToLibrary = () => {
@@ -164,59 +235,52 @@ function HomeContent() {
 
     if (isPausedState) {
       resumeSpeech();
-      // State update handled by resumeSpeech's internal logic (if onresume fires reliably)
-      // Or optimistically:
+      // State update handled by onResume listener in tts.ts
       setIsPlaying(true);
       setIsPausedState(false);
     } else if (!isPlaying) {
-      speakText(
-        selectedBook.content,
-        () => { // onEnd callback
-          setIsPlaying(false);
-          setIsPausedState(false);
-          console.log("Playback finished naturally.");
-        },
-        (error) => { // onError callback
-          console.error("Speech error:", error);
-          setIsPlaying(false);
-          setIsPausedState(false);
-          toast({
-             variant: "destructive",
-             title: "Speech Error",
-             description: "Could not play audio. Please try again.",
-           });
-        },
-        // onStart callback
-        () => {
-             setIsPlaying(true);
-             setIsPausedState(false);
-             console.log('Playback started via callback');
-        },
-         // onPause callback (optional, can rely on handlePause)
-         () => {
-            setIsPlaying(false);
-            setIsPausedState(true);
-            console.log('Playback paused via callback');
+       // Start speaking
+       speakText(
+         selectedBook.content,
+         () => { // onEnd callback
+           setIsPlaying(false);
+           setIsPausedState(false);
+           console.log("Playback finished naturally.");
          },
-         // onResume callback (optional, can rely on handlePlay/resumeSpeech)
-         () => {
-             setIsPlaying(true);
-             setIsPausedState(false);
-             console.log('Playback resumed via callback');
-         }
-
-      );
-      // Optimistic update (consider relying solely on onStart if needed)
-      // setIsPlaying(true);
-      // setIsPausedState(false);
+         (error) => { // onError callback
+           console.error("Speech error:", error);
+           setIsPlaying(false);
+           setIsPausedState(false);
+           toast({
+              variant: "destructive",
+              title: "Speech Error",
+              description: "Could not play audio. Please try again.",
+            });
+         },
+         () => { // onStart callback
+              setIsPlaying(true);
+              setIsPausedState(false);
+              console.log('Playback started via callback');
+         },
+          () => { // onPause callback
+             setIsPlaying(false);
+             setIsPausedState(true);
+             console.log('Playback paused via callback');
+          },
+          () => { // onResume callback
+              setIsPlaying(true);
+              setIsPausedState(false);
+              console.log('Playback resumed via callback');
+          }
+       );
     }
   };
 
   const handlePause = () => {
     if (isPlaying && typeof window !== 'undefined' && window.speechSynthesis) {
       pauseSpeech();
-       // Optimistic update (consider relying on onPause callback)
-       setIsPlaying(false);
+      // State update relies on onPause listener in tts.ts
+       setIsPlaying(false); // Optimistic update helps UI responsiveness
        setIsPausedState(true);
     }
   };
@@ -224,14 +288,13 @@ function HomeContent() {
   const handleStop = () => {
      if (typeof window !== 'undefined' && window.speechSynthesis) {
         stopSpeech();
-        // TTS stopSpeech will trigger onEnd, which resets state.
-        // Or optimistically:
-        setIsPlaying(false);
+        // State update relies on onEnd listener triggered by cancel()
+        setIsPlaying(false); // Optimistic update
         setIsPausedState(false);
      }
   };
 
-  // --- Genkit Flow Handlers ---
+ // --- Genkit Flow Handlers ---
 
  const handleSummarize = async () => {
     if (!selectedBook?.content) return;
@@ -342,6 +405,30 @@ function HomeContent() {
     });
   };
 
+  // --- Logout Handler ---
+  const handleLogout = async () => {
+    try {
+        await signOut(auth);
+        toast({ title: 'Logged Out', description: 'You have been logged out successfully.' });
+        // AuthProvider will handle redirect via the useEffect hook
+        setSelectedBook(null); // Clear selected book on logout
+        setViewMode('library'); // Go to library view
+        // Clear other states if necessary
+        setBooks([]);
+        setSummaryState({ loading: false, data: null, error: null });
+        setQuizState({ loading: false, data: null, error: null });
+        setUserAnswers({});
+        setQuizSubmitted(false);
+        setQuizScore(null);
+        setIsPlaying(false);
+        setIsPausedState(false);
+    } catch (error) {
+        console.error("Logout failed:", error);
+        toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out. Please try again.' });
+    }
+  };
+
+
   // Effect to handle component unmount or view change
   useEffect(() => {
     return () => {
@@ -352,21 +439,35 @@ function HomeContent() {
     };
   }, [viewMode]); // Stop speech if view changes (and potentially on unmount)
 
-
-  // Don't render until mobile state is determined to avoid hydration issues
-  // Use state variable `mounted` to track client-side mount
-  const [mounted, setMounted] = useState(false);
   useEffect(() => {
       setMounted(true);
   }, []);
 
-  if (!mounted || isMobile === undefined) {
-      return null; // Or a loading indicator
+
+  // Show loading indicator while auth is loading or user is null (before redirect)
+  if (authLoading || !user) {
+      // You can return a full-page loader here if preferred
+      return (
+           <div className="flex items-center justify-center min-h-screen">
+               <Loader2 className="h-16 w-16 animate-spin text-primary" />
+           </div>
+      );
   }
+
+  // Don't render the main UI until mounted to avoid hydration mismatches related to isMobile
+  if (!mounted || isMobile === undefined) {
+     // Or a loading indicator matching the theme
+     return (
+          <div className="flex items-center justify-center min-h-screen">
+              <Loader2 className="h-16 w-16 animate-spin text-primary" />
+          </div>
+     );
+  }
+
 
   return (
     <>
-      {/* Sidebar remains consistent */}
+      {/* Sidebar */}
        <Sidebar collapsible="icon">
          <SidebarHeader className="items-center border-b border-sidebar-border">
            <div className="flex items-center gap-2">
@@ -380,46 +481,111 @@ function HomeContent() {
               </div>
            )}
          </SidebarHeader>
-         <SidebarContent className="p-0">
-             {/* Always show the library list in the sidebar */}
-            <div className="p-4">
-              <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Bookshelf</p>
-              {books.length === 0 ? (
-                 <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
-                   Upload a file to start.
-                 </div>
-              ) : (
-                <ScrollArea className="h-[calc(100vh-200px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height as needed */}
-                    <ul className="space-y-1 pr-4 group-data-[collapsible=icon]:pr-0">
-                      {books.map((book) => (
-                        <li key={book.id}>
-                          <Button
-                            variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"} // Highlight only if selected AND in reader view
-                            className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
-                            onClick={() => handleSelectBook(book)}
-                            title={book.name} // Show full name on hover
-                          >
-                            <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                            <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                </ScrollArea>
-              )}
+         <SidebarContent className="p-0 flex flex-col">
+             {/* Bookshelf */}
+             <div className="p-4 flex-grow overflow-hidden">
+                 <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Bookshelf</p>
+                  {booksLoading ? (
+                    <div className="mt-4 space-y-2 group-data-[collapsible=icon]:hidden">
+                         {/* Skeleton Loader for books */}
+                         {[...Array(3)].map((_, i) => (
+                             <div key={i} className="flex items-center space-x-2 p-2 rounded bg-muted/50 animate-pulse">
+                                 <Book className="h-4 w-4 text-muted-foreground/50" />
+                                 <div className="h-4 bg-muted-foreground/30 rounded w-3/4"></div>
+                             </div>
+                         ))}
+                    </div>
+                  ) : books.length === 0 ? (
+                      <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                         Upload a file to start.
+                      </div>
+                  ) : (
+                      <ScrollArea className="h-[calc(100vh-280px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height */}
+                          <ul className="space-y-1 pr-4 group-data-[collapsible=icon]:pr-0">
+                          {books.map((book) => (
+                            <li key={book.id} className="group/book-item relative">
+                              <Button
+                                variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"}
+                                className={`w-full justify-start text-left h-auto py-2 px-2 ${selectedBook?.id === book.id && viewMode === 'reader' ? 'font-semibold' : ''} group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`}
+                                onClick={() => handleSelectBook(book)}
+                                title={book.name} // Show full name on hover
+                              >
+                                <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
+                                <span className="truncate flex-grow group-data-[collapsible=icon]:hidden">{book.name}</span>
+                              </Button>
+                               {/* Delete Button - Show on hover (desktop) or always (mobile, if needed) */}
+                                <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover/book-item:opacity-100 focus:opacity-100 group-data-[collapsible=icon]:hidden"
+                                            aria-label={`Delete book ${book.name}`}
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                            This action cannot be undone. This will permanently delete "{book.name}" from your library.
+                                        </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => deleteBook(book.id, book.name)} className={buttonVariants({ variant: "destructive" })}>
+                                            Delete
+                                        </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
+
+                            </li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                  )}
             </div>
+
+             {/* File Upload - Moved below bookshelf */}
+             <div className="border-t border-sidebar-border p-4 mt-auto group-data-[collapsible=icon]:p-2">
+                <FileUpload onUploadSuccess={addBook} />
+            </div>
+
+              {/* User Info & Logout */}
+             <div className="border-t border-sidebar-border p-4 group-data-[collapsible=icon]:p-2">
+                 <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+                     {/* Placeholder for Avatar - can add later */}
+                     {/* <Avatar className="h-8 w-8 group-data-[collapsible=icon]:h-6 group-data-[collapsible=icon]:w-6">
+                         <AvatarFallback>{user?.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                     </Avatar> */}
+                     <div className="flex-grow truncate group-data-[collapsible=icon]:hidden">
+                        <p className="text-sm font-medium text-foreground truncate" title={user?.email || 'User'}>{user?.email || 'User'}</p>
+                        {/* <p className="text-xs text-muted-foreground">User ID: {user?.uid}</p> */}
+                    </div>
+                     <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleLogout}
+                        className="ml-auto group-data-[collapsible=icon]:ml-0"
+                        title="Logout"
+                      >
+                        <LogOut className="h-4 w-4" />
+                     </Button>
+                 </div>
+             </div>
          </SidebarContent>
-         <SidebarFooter className="border-t border-sidebar-border p-4">
+         {/* <SidebarFooter className="border-t border-sidebar-border p-4">
             <FileUpload onUploadSuccess={addBook} />
-         </SidebarFooter>
+         </SidebarFooter> */}
        </Sidebar>
 
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
-         {/* Mobile Header - Only render on client after mount */}
+         {/* Mobile Header */}
          {mounted && isMobile && (
-             <header className="flex h-14 items-center gap-4 border-b bg-card px-6">
-                {/* Show back button in reader view on mobile, otherwise show sidebar trigger */}
+             <header className="flex h-14 items-center gap-4 border-b bg-card px-4 sticky top-0 z-10">
                 {viewMode === 'reader' ? (
                      <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
                          <ArrowLeft className="h-5 w-5" />
@@ -427,32 +593,43 @@ function HomeContent() {
                  ) : (
                      <SidebarTrigger />
                  )}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-grow justify-center">
                    <Book className="h-6 w-6 text-primary" />
                    <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
                 </div>
+                 {/* Add a spacer or adjust layout if Logout needs to be here */}
+                  <div className="w-8"> {/* Placeholder for alignment if needed */}
+                      {!user && ( // Show login icon if no user (shouldn't happen due to redirect, but for safety)
+                          <Button variant="ghost" size="icon" onClick={() => router.push('/auth')} title="Login">
+                             <LogIn className="h-5 w-5" />
+                          </Button>
+                       )}
+                   </div>
+
              </header>
          )}
-        <main className="flex flex-1 flex-col items-stretch p-6 overflow-hidden">
+        <main className="flex flex-1 flex-col items-stretch p-4 md:p-6 overflow-hidden">
           {/* Conditional Rendering based on viewMode */}
           {viewMode === 'library' && (
              <div className="flex flex-1 flex-col items-center justify-center text-center">
                 <Book size={48} className="text-muted-foreground mb-4" />
-                <h2 className="text-2xl font-semibold mb-2">Welcome to AudioBook Buddy</h2>
+                <h2 className="text-2xl font-semibold mb-2">Welcome, {user?.email || 'User'}!</h2>
                 <p className="text-muted-foreground mb-6 max-w-md">
-                  Upload a PDF or ePUB file to start listening and get AI insights. Select a book from your bookshelf in the sidebar to begin reading.
+                  {books.length > 0
+                    ? "Select a book from your bookshelf to start reading and get AI insights."
+                    : "Upload a PDF or ePUB file using the button in the sidebar to begin."}
                 </p>
-                 {books.length === 0 && ( // Show upload button only if library is empty in this view
-                    <FileUpload buttonVariant="default" buttonSize="lg" onUploadSuccess={addBook} />
+                 {books.length === 0 && !booksLoading && ( // Show upload hint if library is empty and not loading
+                     <p className="text-sm text-primary animate-pulse">Use the 'Upload File' button in the sidebar.</p>
                  )}
              </div>
           )}
 
           {viewMode === 'reader' && selectedBook && (
-            <div className="flex flex-1 flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full">
-               {/* Back Button (Desktop) - Only render on client after mount */}
+            <div className="flex flex-1 flex-col lg:flex-row gap-4 md:gap-6 max-w-7xl mx-auto w-full overflow-hidden">
+               {/* Back Button (Desktop) */}
                 {mounted && !isMobile && (
-                    <div className="absolute top-6 left-6 z-10">
+                    <div className="absolute top-4 left-4 md:top-6 md:left-6 z-20">
                          <Button variant="outline" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library">
                              <ArrowLeft className="h-5 w-5" />
                          </Button>
@@ -460,18 +637,18 @@ function HomeContent() {
                  )}
 
               {/* Book Content Area */}
-              <Card className="flex flex-col flex-1 lg:w-2/3 shadow-md relative pt-10 md:pt-0"> {/* Add padding top for mobile header or button space */}
-                 <CardHeader className="border-b pt-4 pb-4 md:pt-6 md:pb-6"> {/* Adjust padding */}
-                    <CardTitle className="truncate">{selectedBook.name}</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 p-4 overflow-hidden">
-                  <ScrollArea className="h-full pr-4">
-                    <p className="text-sm text-foreground whitespace-pre-wrap">
+              <Card className="flex flex-col flex-1 lg:w-2/3 shadow-md relative pt-10 md:pt-0"> {/* Add padding top for mobile header/button space */}
+                 <CardHeader className="border-b pt-4 pb-4 md:pt-6 md:pb-6 sticky top-0 bg-card z-10"> {/* Make header sticky */}
+                     <CardTitle className="truncate pr-10">{selectedBook.name}</CardTitle> {/* Add padding for potential back button */}
+                 </CardHeader>
+                 <CardContent className="flex-1 p-4 overflow-auto"> {/* Changed overflow-hidden to overflow-auto */}
+                  {/* <ScrollArea className="h-full pr-4"> */} {/* Remove ScrollArea if CardContent handles scroll */}
+                    <p className="text-sm text-foreground whitespace-pre-wrap break-words"> {/* Added break-words */}
                       {selectedBook.content || "No content available."}
                     </p>
-                  </ScrollArea>
+                  {/* </ScrollArea> */}
                 </CardContent>
-                <CardFooter className="border-t p-4 flex items-center justify-center gap-4 bg-muted/50">
+                <CardFooter className="border-t p-4 flex items-center justify-center gap-4 bg-muted/50 sticky bottom-0 z-10">
                   <Button
                     onClick={isPlaying ? handlePause : handlePlay}
                     size="icon"
@@ -495,11 +672,11 @@ function HomeContent() {
 
               {/* AI Features Area */}
               <Card className="flex flex-col lg:w-1/3 shadow-md overflow-hidden">
-                <CardHeader className="border-b">
+                <CardHeader className="border-b sticky top-0 bg-card z-10">
                   <CardTitle>AI Insights</CardTitle>
                 </CardHeader>
-                <CardContent className="flex-1 p-4 overflow-hidden">
-                  <ScrollArea className="h-full pr-4">
+                <CardContent className="flex-1 p-4 overflow-auto"> {/* Changed overflow-hidden to overflow-auto */}
+                  {/* <ScrollArea className="h-full pr-4"> */} {/* Remove ScrollArea */}
                     <Accordion type="single" collapsible className="w-full" defaultValue="summary">
                       {/* Summary Section */}
                       <AccordionItem value="summary">
@@ -616,7 +793,7 @@ function HomeContent() {
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
-                  </ScrollArea>
+                  {/* </ScrollArea> */}
                 </CardContent>
               </Card>
             </div>
@@ -636,3 +813,4 @@ export default function Home() {
     </SidebarProvider>
   );
 }
+

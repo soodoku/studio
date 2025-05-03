@@ -135,9 +135,10 @@ const SidebarProvider = React.forwardRef<
       const handleKeyDown = (event: KeyboardEvent) => {
         // Ignore if focus is inside an input, textarea, or select
         const target = event.target as HTMLElement;
-        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
-          return;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) {
+            return;
         }
+
 
         if (
           event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
@@ -222,13 +223,15 @@ const Sidebar = React.forwardRef<
         setMounted(true);
     }, []);
 
-    // Render null on the server and during initial client hydration before mount
+    // Render skeleton or null on the server and during initial client hydration
     if (!mounted) {
-       return null;
+       // You could return a basic skeleton structure here if needed
+       return null; // Or a simple div placeholder
     }
 
 
     if (collapsible === "none") {
+      // Always render expanded for 'none' collapsible type
       return (
         <div
           className={cn(
@@ -243,6 +246,7 @@ const Sidebar = React.forwardRef<
       )
     }
 
+    // Mobile Rendering (uses Sheet)
     if (isMobile) {
       return (
         <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
@@ -267,47 +271,63 @@ const Sidebar = React.forwardRef<
       )
     }
 
-    // Desktop rendering (only happens after mount and if isMobile is false)
+    // Desktop Rendering (happens after mount and if isMobile is false)
     return (
       <div
         ref={ref}
         className="group peer hidden md:block text-sidebar-foreground"
-        data-state={state}
-        data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-state={state} // 'expanded' or 'collapsed'
+        data-collapsible={collapsible} // Pass collapsible prop for styling
         data-variant={variant}
         data-side={side}
       >
-        {/* This is what handles the sidebar gap on desktop */}
+        {/* This div creates the space for the sidebar */}
         <div
           className={cn(
             "duration-200 relative h-svh bg-transparent transition-[width] ease-linear",
              // Adjust width based on state and collapsible mode
             "w-0", // Default to 0 width
             "group-data-[state=expanded]:w-[--sidebar-width]", // Expanded width
-            "group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[--sidebar-width-icon]", // Icon collapsed width
+            // Icon collapsed width - applies only if collapsible is 'icon'
+            "group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[--sidebar-width-icon]",
             // Floating/Inset specific width adjustments for icon mode
             (variant === "floating" || variant === "inset") && "group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]",
-            // Rotate for right side
-            "group-data-[side=right]:rotate-180" // Ensure rotation doesn't interfere with width logic
+             // Offcanvas collapsed width - applies only if collapsible is 'offcanvas'
+             "group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:w-0", // Explicitly 0 for offcanvas collapsed
+
+            // Rotate for right side (doesn't affect width logic)
+            "group-data-[side=right]:rotate-180"
           )}
         />
+        {/* This div is the actual sidebar content container */}
         <div
           className={cn(
             "duration-200 fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] ease-linear md:flex",
-            // Positioning based on side and state/collapsible mode
-            side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:right-[calc(var(--sidebar-width)*-1)]",
+            // --- Positioning based on side ---
+            side === "left" ? "left-0" : "right-0",
 
-             // Width based on state and collapsible mode
+            // --- Width based on state and collapsible mode ---
             "w-0", // Default width 0
             "group-data-[state=expanded]:w-[--sidebar-width]", // Expanded width
-            "group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[--sidebar-width-icon]", // Icon collapsed width
 
-            // Adjust the padding and width for floating and inset variants in icon mode.
+            // Icon collapsed width
+            "group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[--sidebar-width-icon]",
+
+             // Offcanvas collapsed width and positioning
+             "group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:w-[--sidebar-width]", // Keep width but move off-screen
+             side === "left" ? "group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:-left-[--sidebar-width]"
+                             : "group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:-right-[--sidebar-width]",
+
+
+            // --- Adjustments for floating/inset variants in icon mode ---
             (variant === "floating" || variant === "inset")
               ? "p-2 group-data-[collapsible=icon]:group-data-[state=collapsed]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
-              : "group-data-[collapsible=icon]:group-data-[state=collapsed]:border-r group-data-[side=right]:group-data-[collapsible=icon]:group-data-[state=collapsed]:border-l group-data-[side=left]:border-r group-data-[side=right]:border-l", // Apply borders for default sidebar variant
+              : "", // No extra padding for default variant
+
+             // --- Borders based on variant and side ---
+             variant === "sidebar" && side === "left" && "border-r border-sidebar-border",
+             variant === "sidebar" && side === "right" && "border-l border-sidebar-border",
+             (variant === "floating" || variant === "inset") && "p-2", // Padding for these variants
 
             className
           )}
@@ -317,8 +337,7 @@ const Sidebar = React.forwardRef<
             data-sidebar="sidebar"
             className={cn("flex h-full w-full flex-col bg-sidebar",
             // Styling for floating/inset variants
-            variant === "floating" && "rounded-lg border border-sidebar-border shadow",
-            variant === "inset" && "rounded-lg border border-sidebar-border shadow" // Added similar styling for inset as floating
+            (variant === "floating" || variant === "inset") && "rounded-lg border border-sidebar-border shadow"
             )}
           >
             {children}
@@ -330,11 +349,22 @@ const Sidebar = React.forwardRef<
 )
 Sidebar.displayName = "Sidebar"
 
+
 const SidebarTrigger = React.forwardRef<
   React.ElementRef<typeof Button>,
   React.ComponentProps<typeof Button>
 >(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+  const { toggleSidebar, isMobile } = useSidebar()
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Only render the trigger on the client, and only for mobile view
+  if (!mounted || !isMobile) {
+    return null;
+  }
 
   return (
     <Button
@@ -360,7 +390,17 @@ const SidebarRail = React.forwardRef<
   HTMLButtonElement,
   React.ComponentProps<"button">
 >(({ className, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+  const { toggleSidebar, isMobile } = useSidebar();
+   const [mounted, setMounted] = React.useState(false);
+
+   React.useEffect(() => {
+       setMounted(true);
+   }, []);
+
+   // Do not render the rail on mobile or during SSR/hydration
+   if (!mounted || isMobile) {
+       return null;
+   }
 
   return (
     <button
@@ -371,7 +411,7 @@ const SidebarRail = React.forwardRef<
       onClick={toggleSidebar}
       title="Toggle Sidebar"
       className={cn(
-        "absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
+        "absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=left]:-right-4 group-data-[side=right]:left-0 md:flex", // Changed sm:flex to md:flex
         "[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize",
         "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
         "group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full group-data-[collapsible=offcanvas]:hover:bg-sidebar",
@@ -389,18 +429,45 @@ const SidebarInset = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"main">
 >(({ className, ...props }, ref) => {
+    const { isMobile, state } = useSidebar(); // Use sidebar state
+    const [mounted, setMounted] = React.useState(false);
+
+    React.useEffect(() => {
+        setMounted(true);
+    }, []);
+
   return (
     <main
       ref={ref}
       className={cn(
-        "relative flex min-h-svh flex-1 flex-col bg-background",
+        "relative flex min-h-svh flex-1 flex-col bg-background transition-[padding-left,padding-right] ease-linear", // Add transition for padding
+        // --- Mobile ---
+        "pl-0", // No padding on mobile by default
+
+        // --- Desktop ---
+        // Apply padding based on sidebar state ONLY when mounted and not mobile
+        mounted && !isMobile && state === 'expanded' && "md:pl-[var(--sidebar-width)]", // Expanded padding
+        // Apply padding for collapsed icon mode ONLY when mounted, not mobile, and collapsible is icon
+        mounted && !isMobile && state === 'collapsed' && "md:pl-[var(--sidebar-width-icon)]", // Collapsed icon padding
+
+
+        // --- Inset Variant Specific Adjustments (Apply these ON TOP of the base padding) ---
         "peer-data-[variant=inset]:min-h-[calc(100svh-theme(spacing.4))] md:peer-data-[variant=inset]:m-2",
-        // Adjust margin based on sidebar state and side for inset variant
-        "md:peer-data-[side=left]:peer-data-[state=expanded]:peer-data-[variant=inset]:ml-[calc(var(--sidebar-width)_+_theme(spacing.2))]",
-        "md:peer-data-[side=right]:peer-data-[state=expanded]:peer-data-[variant=inset]:mr-[calc(var(--sidebar-width)_+_theme(spacing.2))]",
-        "md:peer-data-[side=left]:peer-data-[collapsible=icon]:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-[calc(var(--sidebar-width-icon)_+_theme(spacing.6))]", // Margin for collapsed icon mode left
-        "md:peer-data-[side=right]:peer-data-[collapsible=icon]:peer-data-[state=collapsed]:peer-data-[variant=inset]:mr-[calc(var(--sidebar-width-icon)_+_theme(spacing.6))]", // Margin for collapsed icon mode right
+
+        // Adjust margin/padding specifically for inset, considering sidebar state and side
+         mounted && !isMobile && state === 'expanded' && "md:peer-data-[side=left]:peer-data-[variant=inset]:ml-0 md:peer-data-[side=left]:peer-data-[variant=inset]:pl-[calc(var(--sidebar-width)_+_theme(spacing.2))]",
+         mounted && !isMobile && state === 'expanded' && "md:peer-data-[side=right]:peer-data-[variant=inset]:mr-0 md:peer-data-[side=right]:peer-data-[variant=inset]:pr-[calc(var(--sidebar-width)_+_theme(spacing.2))]",
+
+         // Inset + Collapsed Icon mode padding
+         mounted && !isMobile && state === 'collapsed' && "md:peer-data-[side=left]:peer-data-[collapsible=icon]:peer-data-[variant=inset]:ml-0 md:peer-data-[side=left]:peer-data-[collapsible=icon]:peer-data-[variant=inset]:pl-[calc(var(--sidebar-width-icon)_+_theme(spacing.6))]",
+         mounted && !isMobile && state === 'collapsed' && "md:peer-data-[side=right]:peer-data-[collapsible=icon]:peer-data-[variant=inset]:mr-0 md:peer-data-[side=right]:peer-data-[collapsible=icon]:peer-data-[variant=inset]:pr-[calc(var(--sidebar-width-icon)_+_theme(spacing.6))]",
+
+        // Inset + Offcanvas Collapsed mode (should have no extra padding)
+         mounted && !isMobile && state === 'collapsed' && "md:peer-data-[collapsible=offcanvas]:peer-data-[variant=inset]:pl-0 md:peer-data-[collapsible=offcanvas]:peer-data-[variant=inset]:pr-0",
+
+
         "md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow",
+
         className
       )}
       {...props}
@@ -659,22 +726,6 @@ const SidebarMenuButton = React.forwardRef<
     const Comp = asChild ? Slot : "button"
     const { isMobile, state } = useSidebar()
 
-    const buttonContent = (
-      <>
-        {/* Render icon first if children is an array (icon + text) */}
-        {Array.isArray(children) && children[0]}
-        {/* Render text span only if sidebar is expanded */}
-        {state === 'expanded' && !isMobile && (
-          <span>
-             {/* Render text content (either single child or second element of array) */}
-            {Array.isArray(children) ? children[1] : children}
-          </span>
-        )}
-         {/* If not an array (just text) or if in mobile/icon mode, render the icon directly if it's the only child */}
-         {!Array.isArray(children) && (state === 'collapsed' || isMobile) && children}
-      </>
-    );
-
 
      const button = (
       <Comp
@@ -689,10 +740,11 @@ const SidebarMenuButton = React.forwardRef<
       </Comp>
     )
 
-    // Tooltip logic remains the same
-    if (!tooltip) {
+    // Tooltip logic
+    if (!tooltip || state === 'expanded' || isMobile) { // Don't show tooltip if expanded or mobile
       return button
     }
+
 
     // Ensure tooltip content is an object
     const tooltipProps = typeof tooltip === 'string' ? { children: tooltip } : tooltip;
@@ -704,7 +756,7 @@ const SidebarMenuButton = React.forwardRef<
         <TooltipContent
           side="right"
           align="center"
-          hidden={state !== "collapsed" || isMobile === true} // Use isMobile explicitly true
+          //hidden={state !== "collapsed" || isMobile === true} // Hide logic moved outside
           {...tooltipProps} // Spread tooltip content props
         />
       </Tooltip>

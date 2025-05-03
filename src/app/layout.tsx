@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { GeistSans } from 'geist/font/sans';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
+import { AuthProvider } from '@/contexts/AuthContext'; // Import AuthProvider
 
 export const metadata = {
   title: 'AudioBook Buddy',
@@ -21,7 +22,9 @@ export default function RootLayout({
     // This needs to be on the <html> tag
     <html lang="en" suppressHydrationWarning>
       <body className={bodyClassName}>
-        {children}
+        <AuthProvider> {/* Wrap children with AuthProvider */}
+          {children}
+        </AuthProvider>
         <Toaster />
       </body>
     </html>
