@@ -69,6 +69,9 @@ export const uploadFileToStorage = (
           case 'storage/canceled':
             errorMessage = 'Upload canceled.';
             break;
+          case 'storage/retry-limit-exceeded': // Added specific handling
+              errorMessage = 'Upload timed out due to network issues. Please check your connection and try again.';
+              break;
           case 'storage/unknown':
             errorMessage = 'An unknown storage error occurred.';
             break;
@@ -96,4 +99,5 @@ export const uploadFileToStorage = (
 
 // TODO: Add function to delete files from storage when a book is deleted.
 // export const deleteFileFromStorage = async (storagePathOrUrl: string): Promise<void> => { ... }
+
 
