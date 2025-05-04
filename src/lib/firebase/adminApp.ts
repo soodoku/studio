@@ -63,11 +63,16 @@ export function initializeAdminApp(): admin.app.App {
             credentialSource = 'Application Default Credentials (ADC)';
             console.log(`[Firebase Admin] Successfully loaded credentials using ${credentialSource}.`);
         } catch (adcError: any) {
-            console.warn(`[Firebase Admin] Failed to load ADC: ${adcError.message}.`);
+            console.warn(`[Firebase Admin] Failed to load ADC: ${adcError.message}. Check if ADC are configured or if GOOGLE_APPLICATION_CREDENTIALS is set.`);
             // Priority 2: Service Account Path (if GOOGLE_APPLICATION_CREDENTIALS is set)
             if (serviceAccountPath) {
                 console.log(`[Firebase Admin] ADC failed. Attempting to load credentials from GOOGLE_APPLICATION_CREDENTIALS path: ${serviceAccountPath}`);
                 try {
+                    // Ensure the path exists (basic check)
+                    const fs = require('fs'); // Use require for conditional import in Node.js environment
+                    if (!fs.existsSync(serviceAccountPath)) {
+                         throw new Error(`Service account file not found at path: ${serviceAccountPath}`);
+                    }
                     credential = admin.credential.cert(serviceAccountPath);
                     credentialSource = 'GOOGLE_APPLICATION_CREDENTIALS path';
                     console.log(`[Firebase Admin] Successfully loaded credentials from ${credentialSource}.`);
