@@ -8,15 +8,16 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { uploadFileToStorage } from '@/services/storage'; // Import the storage service
 import { Progress } from '@/components/ui/progress'; // Import Progress component
+// Removed import for convertFileToText
 
 
 // Define the structure for the metadata passed to onUploadSuccess
+// Removed textContent as it's no longer extracted during upload
 export interface FileUploadMetadata {
     fileName: string;
     contentType: string;
     size: number;
     storageUrl: string;
-    textContent?: string; // Keep textContent optional for now
 }
 
 
@@ -74,19 +75,20 @@ export function FileUpload({
             }
         );
 
-        // 2. Prepare metadata for Firestore
+        // 2. Prepare metadata for Firestore (without text content)
         const metadata: FileUploadMetadata = {
             fileName: file.name,
             contentType: file.type,
             size: file.size,
             storageUrl: downloadURL,
-            // textContent: OPTIONAL - Could extract here if needed immediately, or later via a separate process/flow
         };
 
-      toast({
-        title: "Upload Successful",
-        description: `${file.name} uploaded and saved.`,
-      });
+        console.log("[FileUpload] Upload successful, metadata prepared:", metadata);
+
+        toast({
+            title: "Upload Successful",
+            description: `${file.name} uploaded and saved.`,
+        });
 
       // 3. Call the success callback with the metadata
       onUploadSuccess?.(metadata);
@@ -103,6 +105,8 @@ export function FileUpload({
         description: errorMessage,
       });
     } finally {
+      // Ensure loading state and progress are reset in all cases
+      console.log("[FileUpload] Upload process finished (success or failure). Resetting state.");
       setIsUploading(false);
       setUploadProgress(null); // Clear progress
       if (fileInputRef.current) fileInputRef.current.value = ""; // Clear input
