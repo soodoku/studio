@@ -1,0 +1,33 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Allow logged-in users to read and write their own book documents.
+    // Match any document in the 'books' collection.
+    match /books/{bookId} {
+      // Read: Allow if the requesting user's ID matches the 'userId' field in the document.
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+
+      // Create: Allow if the requesting user is logged in and the 'userId' being set matches their ID.
+      // Also ensure createdAt timestamp is set by the server or client (with validation if needed).
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId
+                      && request.resource.data.createdAt is timestamp; // Basic check for createdAt
+
+      // Update: Allow if the requesting user's ID matches the 'userId' field in the *existing* document.
+      // Prevent changing the userId field.
+      allow update: if request.auth != null && request.auth.uid == resource.data.userId
+                      && request.resource.data.userId == resource.data.userId; // Ensure userId cannot be changed
+
+      // Delete: Allow if the requesting user's ID matches the 'userId' field in the document.
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // Add other rules for different collections if needed.
+    // Example: User profiles (allow users to read/write their own profile)
+    // match /users/{userId} {
+    //   allow read, write: if request.auth != null && request.auth.uid == userId;
+    // }
+  }
+}

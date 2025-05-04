@@ -89,7 +89,8 @@ function HomeContent() {
     if (user && db) { // Ensure user and db are available
       setBooksLoading(true); // Start loading books
       const booksCollection = collection(db, 'books');
-      const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc')); // Order by creation time
+      // Query for books belonging to the current user, ordered by creation time
+      const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
 
       // Use onSnapshot for real-time updates
       const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -103,10 +104,10 @@ function HomeContent() {
         })) as BookItem[];
         setBooks(userBooks);
         setBooksLoading(false); // Finish loading books
-        console.log("Books loaded:", userBooks.length);
+        console.log("Books loaded/updated:", userBooks.length);
       }, (error) => {
         console.error("Error fetching books:", error);
-        toast({ variant: "destructive", title: "Error Loading Books", description: "Could not fetch your bookshelf." });
+        toast({ variant: "destructive", title: "Error Loading Books", description: "Could not fetch your bookshelf. Check Firestore rules or connection." });
         setBooksLoading(false); // Finish loading even on error
       });
 
@@ -122,7 +123,7 @@ function HomeContent() {
       setBooks([]); // Clear books if no user
       setBooksLoading(false); // Not loading if no user
     }
-  }, [user, toast]); // Rerun when user or db changes
+  }, [user, toast]); // Rerun when user changes
 
 
    const addBook = useCallback(async (fileName: string, textContent: string) => {
@@ -150,10 +151,10 @@ function HomeContent() {
         try {
             const booksCollection = collection(db, 'books');
             const newBookData = {
-                userId: user.uid,
+                userId: user.uid, // Associate book with the current user
                 name: fileName,
                 content: textContent,
-                createdAt: new Date(), // Use JS Date, Firestore converts it
+                createdAt: new Date(), // Add a timestamp for sorting
                 audioFileName: null, // Initialize audio field
             };
             const docRef = await addDoc(booksCollection, newBookData);
@@ -168,10 +169,10 @@ function HomeContent() {
             toast({
                 variant: "destructive",
                 title: "Error Adding Book",
-                description: "Could not save the book to your library.",
+                description: "Could not save the book to your library. Check Firestore rules.",
             });
         }
-    }, [user, books, toast]); // Removed isPlaying, isPausedState as adding a book shouldn't stop unrelated playback
+    }, [user, books, toast]); // Depend on user, books list (for duplicate check), and toast
 
 
     const deleteBook = async (bookId: string, bookName: string) => {
@@ -183,6 +184,7 @@ function HomeContent() {
         }
 
         try {
+            // Security rule `request.auth.uid == resource.data.userId` should handle authorization
             await deleteDoc(doc(db, "books", bookId));
             toast({
                 title: "Book Deleted",
@@ -195,7 +197,7 @@ function HomeContent() {
             toast({
                 variant: "destructive",
                 title: "Deletion Failed",
-                description: `Could not delete "${bookName}".`,
+                description: `Could not delete "${bookName}". Check Firestore rules or connection.`,
             });
         }
     };
@@ -443,6 +445,8 @@ const handleGenerateAudio = async () => {
              }
 
             try {
+                // Update the audioFileName field for the specific book document
+                // Security rule: ensure `request.auth.uid == resource.data.userId` allows this write
                 await updateDoc(bookRef, { audioFileName: generatedAudioFileName });
                 console.log(`Firestore updated: Set audioFileName to ${generatedAudioFileName} for book ${selectedBook.id}`);
                 // No need to manually update local state, onSnapshot will trigger update
@@ -561,7 +565,8 @@ const handleGenerateAudio = async () => {
 
   // Show loading indicator while auth is loading or user is null (before redirect)
   // Also show loading if db init failed while auth check is still processing
-  if (authLoading || !user || (user && !db && booksLoading)) {
+  // Use authLoading state from useAuth context
+  if (authLoading) {
       return (
            <div className="flex items-center justify-center min-h-screen">
                <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -570,7 +575,8 @@ const handleGenerateAudio = async () => {
   }
 
   // Don't render the main UI until mounted to avoid hydration mismatches related to isMobile
-  if (!mounted || isMobile === undefined) {
+  // or if user is not yet authenticated (and not loading anymore)
+  if (!mounted || isMobile === undefined || !user) {
      return (
           <div className="flex items-center justify-center min-h-screen">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -582,110 +588,112 @@ const handleGenerateAudio = async () => {
   return (
     <>
       {/* Sidebar */}
-       <Sidebar collapsible="icon">
-         <SidebarHeader className="items-center border-b border-sidebar-border">
-           <div className="flex items-center gap-2">
-              <AudioLines className="h-6 w-6 text-primary" /> {/* Changed icon */}
-              <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
-           </div>
-           {mounted && isMobile && (
-              <div className="ml-auto">
-                <SidebarTrigger />
-              </div>
-           )}
-         </SidebarHeader>
-         <SidebarContent className="p-0 flex flex-col">
-             <div className="p-4 flex-grow overflow-hidden">
-                 <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Library</p>
-                  {booksLoading ? (
-                    <div className="mt-4 space-y-2 group-data-[collapsible=icon]:hidden">
-                         {[...Array(3)].map((_, i) => (
-                             <div key={i} className="flex items-center space-x-2 p-2 rounded bg-muted/50 animate-pulse">
-                                 <Book className="h-4 w-4 text-muted-foreground/50" />
-                                 <div className="h-4 bg-muted-foreground/30 rounded w-3/4"></div>
-                             </div>
-                         ))}
-                    </div>
-                  ) : books.length === 0 ? (
-                      <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
-                         Upload a PDF file to start.
-                      </div>
-                  ) : (
-                      <ScrollArea className="h-[calc(100vh-280px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height */}
-                          <ul className="space-y-1 pr-4 group-data-[collapsible=icon]:pr-0">
-                          {books.map((book) => (
-                            <li key={book.id} className="group/book-item relative">
-                              <Button
-                                variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"}
-                                className={cn(
-                                    `w-full justify-start text-left h-auto py-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`,
-                                    selectedBook?.id === book.id && viewMode === 'reader' && 'font-semibold'
-                                )}
-                                onClick={() => handleSelectBook(book)}
-                                title={book.name} // Show full name on hover
-                              >
-                                <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                                <span className="truncate flex-grow ml-1 group-data-[collapsible=icon]:hidden">{book.name}</span>
-                                {book.audioFileName && ( // Show audio icon if audio exists
-                                     <Headphones className="h-3 w-3 ml-auto text-muted-foreground flex-shrink-0 group-data-[collapsible=icon]:hidden" title="Audio available"/>
-                                )}
-                              </Button>
-                               <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover/book-item:opacity-100 focus:opacity-100 group-data-[collapsible=icon]:hidden"
-                                            aria-label={`Delete book ${book.name}`}
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                            This action cannot be undone. This will permanently delete "{book.name}" {book.audioFileName ? 'and its audio file ' : ''}from your library.
-                                        </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction onClick={() => deleteBook(book.id, book.name)} className={buttonVariants({ variant: "destructive" })}>
-                                            Delete
-                                        </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
+       <SidebarProvider>
+          <Sidebar collapsible="icon">
+             <SidebarHeader className="items-center border-b border-sidebar-border">
+               <div className="flex items-center gap-2">
+                  <AudioLines className="h-6 w-6 text-primary" /> {/* Changed icon */}
+                  <h1 className="text-xl font-semibold text-foreground group-data-[collapsible=icon]:hidden">AudioBook Buddy</h1>
+               </div>
+               {mounted && isMobile && (
+                  <div className="ml-auto">
+                    <SidebarTrigger />
+                  </div>
+               )}
+             </SidebarHeader>
+             <SidebarContent className="p-0 flex flex-col">
+                 <div className="p-4 flex-grow overflow-hidden">
+                     <p className="mb-2 font-medium text-foreground group-data-[collapsible=icon]:hidden">Your Library</p>
+                      {booksLoading ? (
+                        <div className="mt-4 space-y-2 group-data-[collapsible=icon]:hidden">
+                             {[...Array(3)].map((_, i) => (
+                                 <div key={i} className="flex items-center space-x-2 p-2 rounded bg-muted/50 animate-pulse">
+                                     <Book className="h-4 w-4 text-muted-foreground/50" />
+                                     <div className="h-4 bg-muted-foreground/30 rounded w-3/4"></div>
+                                 </div>
+                             ))}
+                        </div>
+                      ) : books.length === 0 ? (
+                          <div className="mt-4 text-center text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                             Upload a PDF file to start.
+                          </div>
+                      ) : (
+                          <ScrollArea className="h-[calc(100vh-280px)] group-data-[collapsible=icon]:h-auto"> {/* Adjust height */}
+                              <ul className="space-y-1 pr-4 group-data-[collapsible=icon]:pr-0">
+                              {books.map((book) => (
+                                <li key={book.id} className="group/book-item relative">
+                                  <Button
+                                    variant={selectedBook?.id === book.id && viewMode === 'reader' ? "secondary" : "ghost"}
+                                    className={cn(
+                                        `w-full justify-start text-left h-auto py-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:size-10`,
+                                        selectedBook?.id === book.id && viewMode === 'reader' && 'font-semibold'
+                                    )}
+                                    onClick={() => handleSelectBook(book)}
+                                    title={book.name} // Show full name on hover
+                                  >
+                                    <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
+                                    <span className="truncate flex-grow ml-1 group-data-[collapsible=icon]:hidden">{book.name}</span>
+                                    {book.audioFileName && ( // Show audio icon if audio exists
+                                         <Headphones className="h-3 w-3 ml-auto text-muted-foreground flex-shrink-0 group-data-[collapsible=icon]:hidden" title="Audio available"/>
+                                    )}
+                                  </Button>
+                                   <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover/book-item:opacity-100 focus:opacity-100 group-data-[collapsible=icon]:hidden"
+                                                aria-label={`Delete book ${book.name}`}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                This action cannot be undone. This will permanently delete "{book.name}" {book.audioFileName ? 'and its audio file ' : ''}from your library.
+                                            </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction onClick={() => deleteBook(book.id, book.name)} className={buttonVariants({ variant: "destructive" })}>
+                                                Delete
+                                            </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
 
-                            </li>
-                          ))}
-                        </ul>
-                      </ScrollArea>
-                  )}
-            </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </ScrollArea>
+                      )}
+                </div>
 
-             <div className="border-t border-sidebar-border p-4 mt-auto group-data-[collapsible=icon]:p-2">
-                <FileUpload onUploadSuccess={addBook} />
-            </div>
+                 <div className="border-t border-sidebar-border p-4 mt-auto group-data-[collapsible=icon]:p-2">
+                    <FileUpload onUploadSuccess={addBook} />
+                </div>
 
-             <div className="border-t border-sidebar-border p-4 group-data-[collapsible=icon]:p-2">
-                 <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-                     <div className="flex-grow truncate group-data-[collapsible=icon]:hidden">
-                        <p className="text-sm font-medium text-foreground truncate" title={user?.email || 'User'}>{user?.email || 'User'}</p>
-                    </div>
-                     <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleLogout}
-                        className="ml-auto group-data-[collapsible=icon]:ml-0"
-                        title="Logout"
-                      >
-                        <LogOut className="h-4 w-4" />
-                     </Button>
+                 <div className="border-t border-sidebar-border p-4 group-data-[collapsible=icon]:p-2">
+                     <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+                         <div className="flex-grow truncate group-data-[collapsible=icon]:hidden">
+                            <p className="text-sm font-medium text-foreground truncate" title={user?.email || 'User'}>{user?.email || 'User'}</p>
+                        </div>
+                         <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={handleLogout}
+                            className="ml-auto group-data-[collapsible=icon]:ml-0"
+                            title="Logout"
+                          >
+                            <LogOut className="h-4 w-4" />
+                         </Button>
+                     </div>
                  </div>
-             </div>
-         </SidebarContent>
-       </Sidebar>
+             </SidebarContent>
+           </Sidebar>
+      </SidebarProvider>
 
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
@@ -703,7 +711,7 @@ const handleGenerateAudio = async () => {
                    <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
                 </div>
                   <div className="w-8"> {/* Placeholder for alignment if needed */}
-                      {!user && (
+                      {!user && !authLoading && ( // Show login only if not loading and no user
                           <Button variant="ghost" size="icon" onClick={() => router.push('/auth')} title="Login">
                              <LogIn className="h-5 w-5" />
                           </Button>
@@ -967,8 +975,10 @@ const handleGenerateAudio = async () => {
 export default function Home() {
   return (
       // Removed AuthProvider wrapper here as it's in RootLayout
-      <SidebarProvider>
-          <HomeContent />
-      </SidebarProvider>
+      // <AuthProvider> // Redundant: Already in layout.tsx
+          // <SidebarProvider> // SidebarProvider is now inside HomeContent
+              <HomeContent />
+          // </SidebarProvider>
+      // </AuthProvider>
   );
 }
