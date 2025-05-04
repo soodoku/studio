@@ -448,11 +448,15 @@ function HomeContent() {
             setIsPausedState(false);
             setCurrentSpeakingText(null); // Clear tracked text on natural end
           },
-          (error) => { // onError
-            console.error("Speech error (onError callback):", error);
+          (errorEvent) => { // onError
+            console.error("Speech error (onError callback):", errorEvent);
             // Ignore "interrupted" error, as it's expected when stopping/starting new speech
-            if (error.error !== 'interrupted') {
-                toast({ variant: "destructive", title: "Speech Error", description: `Could not play audio. Error: ${error.error || 'Unknown'}` });
+            if (errorEvent.error !== 'interrupted') {
+                toast({
+                    variant: "destructive",
+                    title: "Speech Error",
+                    description: `Could not play audio. Error: ${errorEvent.error || 'Unknown'}. Check console for details.`
+                });
             } else {
                 console.log("[TTS] Ignoring 'interrupted' error in UI.");
             }
@@ -1045,5 +1049,6 @@ export default function Home() {
       </SidebarProvider>
   );
 }
+
 
 

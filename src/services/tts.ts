@@ -156,20 +156,26 @@ export function speakText(
     }
   };
 
-  utterance.onerror = (event) => {
-    // Log both the event object and the specific error property
+  utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
+    // Log the full event object for better debugging
     console.error('[TTS] Speech Synthesis Error Event:', event);
-    console.error('[TTS] Specific Error:', event.error);
+    // Log the specific error property if available
+    if (event.error) {
+        console.error('[TTS] Specific Error Code:', event.error);
+    }
     const erroredUtterance = utterance; // Capture utterance before nulling
 
     // Check if the error is the expected "interrupted" error caused by cancel()
-    if (event.error === 'interrupted') {
-        console.log('[TTS] Speech interrupted (likely due to cancel()), ignoring error callback.');
+    // Different browsers might use different codes or messages.
+    const isInterrupted = event.error === 'interrupted' || event.error === 'canceled';
+
+    if (isInterrupted) {
+        console.log('[TTS] Speech interrupted (likely due to cancel()), skipping external error callback.');
         // State reset will happen in onend which follows cancel()
     } else {
         // Handle unexpected errors
         console.error('[TTS] Unexpected speech error occurred.');
-        // Call external error callback for genuine errors
+        // Call external error callback ONLY for genuine errors
         onErrorCallback?.(event);
     }
 
@@ -261,3 +267,4 @@ export function stopSpeech(premature = false): void {
      wasCancelledPrematurely = false; // Ensure flag is reset if synth unavailable
   }
 }
+
