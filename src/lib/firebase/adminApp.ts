@@ -10,133 +10,134 @@ let app: admin.app.App | null = null;
 let initError: string | null = null; // Store initialization error
 let isInitialized = false; // Track initialization status
 
+/**
+ * Initializes the Firebase Admin SDK, prioritizing Application Default Credentials (ADC).
+ * Ensures initialization happens only once. Returns the initialized app instance or throws if initialization fails.
+ * @returns {admin.app.App} The initialized Firebase Admin App instance.
+ * @throws {Error} If initialization fails due to missing configuration or credential issues.
+ */
 export function initializeAdminApp(): admin.app.App {
     // Avoid re-initialization if already successful
     if (isInitialized && app) {
         // console.log('[Firebase Admin] Already initialized successfully.');
         return app;
     }
-    // Reset status before attempting initialization
-    isInitialized = false;
-    initError = null;
-    app = null;
-
-
-    // Check if an app instance already exists (e.g., due to HMR or previous attempt)
-    if (admin.apps.length > 0) {
-        app = admin.app(); // Get the existing default app
-        console.log('[Firebase Admin] SDK already initialized (found existing app). Setting status to initialized.');
-        isInitialized = true;
-        return app!; // Return existing app
+    // If initialization previously failed, re-throw the stored error immediately
+    if (isInitialized && initError) {
+        console.error(`[Firebase Admin] Attempting to re-initialize after previous failure: ${initError}`);
+        throw new Error(`Firebase Admin SDK previously failed to initialize: ${initError}`);
     }
 
-    console.log('[Firebase Admin] No existing app found. Attempting initialization...');
+    // Mark as attempted (even if it fails)
+    isInitialized = true;
+    initError = null; // Reset error before attempting
+    app = null; // Reset app before attempting
+
+    console.log('[Firebase Admin] Attempting Firebase Admin SDK initialization...');
     try {
+        const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+        const storageBucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
         const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-        const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID; // Re-use project ID from client config
-        const storageBucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET; // Re-use storage bucket from client config
 
         // --- Critical Configuration Checks ---
         if (!projectId) {
-            initError = 'Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is not set in the environment for Admin SDK.';
+            initError = 'CRITICAL: Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is not set in the server environment for Admin SDK.';
             console.error(`[Firebase Admin] Initialization failed: ${initError}`);
             throw new Error(initError);
         }
         if (!storageBucket) {
-            initError = 'Firebase Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) is not set in the environment for Admin SDK.';
+            initError = 'CRITICAL: Firebase Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) is not set in the server environment for Admin SDK.';
             console.error(`[Firebase Admin] Initialization failed: ${initError}`);
             throw new Error(initError);
         }
         console.log(`[Firebase Admin] Using Project ID: ${projectId}, Storage Bucket: ${storageBucket}`);
 
-
         // --- Credential Loading Logic ---
         let credential;
-        let credentialSource = 'unknown'; // Track how credentials were loaded
+        let credentialSource = 'unknown';
 
-        if (serviceAccountPath) {
-            console.log('[Firebase Admin] GOOGLE_APPLICATION_CREDENTIALS path provided:', serviceAccountPath);
-            try {
-                // Try loading credentials explicitly from the path first
-                credential = admin.credential.cert(serviceAccountPath);
-                credentialSource = 'GOOGLE_APPLICATION_CREDENTIALS path';
-                console.log(`[Firebase Admin] Service Account credentials loaded successfully from ${credentialSource}.`);
-            } catch (credError: any) {
-                console.warn(`[Firebase Admin] Failed to load credentials from path ${serviceAccountPath}: ${credError.message}. Will attempt applicationDefault next.`);
-                // Fallback to applicationDefault if explicit path fails
+        try {
+            // Priority 1: Application Default Credentials (expected in Firebase/GCP environments like Studio, Cloud Run, Functions)
+            console.log('[Firebase Admin] Attempting to load credentials using admin.credential.applicationDefault().');
+            credential = admin.credential.applicationDefault();
+            credentialSource = 'Application Default Credentials (ADC)';
+            console.log(`[Firebase Admin] Successfully loaded credentials using ${credentialSource}.`);
+        } catch (adcError: any) {
+            console.warn(`[Firebase Admin] Failed to load ADC: ${adcError.message}.`);
+            // Priority 2: Service Account Path (if GOOGLE_APPLICATION_CREDENTIALS is set)
+            if (serviceAccountPath) {
+                console.log(`[Firebase Admin] ADC failed. Attempting to load credentials from GOOGLE_APPLICATION_CREDENTIALS path: ${serviceAccountPath}`);
                 try {
-                    console.log('[Firebase Admin] Attempting fallback: admin.credential.applicationDefault().');
-                    credential = admin.credential.applicationDefault();
-                    credentialSource = 'applicationDefault (after path failure)';
-                    console.log(`[Firebase Admin] Successfully loaded credentials using ${credentialSource}.`);
-                } catch (appDefaultError: any) {
-                    initError = `Failed to load credentials from path AND applicationDefault. Path error: ${credError.message}, AppDefault error: ${appDefaultError.message}`;
+                    credential = admin.credential.cert(serviceAccountPath);
+                    credentialSource = 'GOOGLE_APPLICATION_CREDENTIALS path';
+                    console.log(`[Firebase Admin] Successfully loaded credentials from ${credentialSource}.`);
+                } catch (certError: any) {
+                    initError = `Failed to load credentials using ADC AND from path ${serviceAccountPath}. ADC Error: ${adcError.message}. Cert Error: ${certError.message}`;
                     console.error(`[Firebase Admin] Initialization failed: ${initError}`);
-                    // Log the actual underlying error for more details
-                    console.error("[Firebase Admin] Path Error Details:", credError);
-                    console.error("[Firebase Admin] AppDefault Error Details:", appDefaultError);
-                    throw new Error(initError); // Critical failure
+                    throw new Error(initError); // Critical failure - couldn't load credentials either way
                 }
-            }
-        } else {
-            // Attempt automatic initialization if no explicit path (might work in GCP/Firebase environment)
-            console.log('[Firebase Admin] GOOGLE_APPLICATION_CREDENTIALS not set. Attempting automatic initialization (applicationDefault).');
-            try {
-                credential = admin.credential.applicationDefault();
-                credentialSource = 'applicationDefault (no path set)';
-                console.log(`[Firebase Admin] Successfully loaded credentials using ${credentialSource}.`);
-            } catch (appDefaultError: any) {
-                // Provide a more detailed error message here
-                initError = `Failed to load credentials using applicationDefault (GOOGLE_APPLICATION_CREDENTIALS not set). Ensure the server environment has access to credentials (e.g., through Application Default Credentials in GCP/Firebase Functions/Cloud Run, or a service account JSON). Error: ${appDefaultError.message}`;
+            } else {
+                // ADC failed and no path was provided
+                initError = `Failed to load credentials using ADC, and GOOGLE_APPLICATION_CREDENTIALS path was not set. Ensure the server environment has ADC configured (common in Firebase/GCP) or provide a service account key file path via the environment variable. ADC Error: ${adcError.message}`;
                 console.error(`[Firebase Admin] Initialization failed: ${initError}`);
-                 // Log the actual underlying error for more details
-                 console.error("[Firebase Admin] AppDefault Error Details:", appDefaultError);
-                throw new Error(initError); // Critical failure
+                throw new Error(initError); // Critical failure - no valid credential source found
             }
         }
 
         // --- Initialize App ---
-        console.log('[Firebase Admin] Calling admin.initializeApp...');
-        admin.initializeApp({
-            credential: credential,
-            projectId: projectId, // Explicitly set project ID
-            storageBucket: storageBucket // Set storage bucket
-        });
-
-        app = admin.app(); // Get the initialized app
-        console.log(`[Firebase Admin] SDK initialized successfully for project ${projectId}. App Name: ${app.name}. Credentials loaded via: ${credentialSource}`);
-        isInitialized = true; // Mark as initialized
+        // Ensure an app isn't already initialized (e.g., by HMR or conflicting setups)
+        if (admin.apps.length === 0) {
+            console.log('[Firebase Admin] Calling admin.initializeApp...');
+            admin.initializeApp({
+                credential: credential,
+                projectId: projectId, // Explicitly set project ID
+                storageBucket: storageBucket // Set storage bucket
+            });
+            app = admin.app(); // Get the newly initialized app
+            console.log(`[Firebase Admin] SDK initialized successfully for project ${projectId}. App Name: ${app.name}. Credentials loaded via: ${credentialSource}`);
+        } else {
+            console.warn('[Firebase Admin] admin.apps array was not empty before initializeApp. Getting existing default app.');
+            app = admin.app(); // Get the existing default app
+             // Verify existing app matches config (optional but good sanity check)
+            if (app.options.projectId !== projectId || app.options.storageBucket !== storageBucket) {
+                 console.error(`[Firebase Admin] Mismatch! Existing app projectId (${app.options.projectId}) or storageBucket (${app.options.storageBucket}) does not match environment config (${projectId}, ${storageBucket}). This might cause issues.`);
+                 // Decide how to handle mismatch: throw error, log warning, etc.
+                 // For now, we'll log and proceed with the existing app.
+            } else {
+                 console.log(`[Firebase Admin] Existing app configuration matches environment. Using existing app: ${app.name}`);
+            }
+        }
 
     } catch (error: any) {
         // Catch errors during the initialization block
         const errorMessage = error instanceof Error ? error.message : String(error);
         // Only set initError if it wasn't already set by a specific check inside
         if (!initError) {
-            initError = `Firebase Admin SDK initialization failed: ${errorMessage}`;
+            initError = `Firebase Admin SDK initialization process failed: ${errorMessage}`;
         }
-        console.error('[Firebase Admin] CRITICAL INITIALIZATION FAILURE:', initError, error.stack); // Log full error stack
+        console.error('[Firebase Admin] CRITICAL INITIALIZATION FAILURE:', initError, error.stack);
         app = null; // Ensure app is null on failure
-        isInitialized = false; // Ensure marked as not initialized
         // Re-throw the error to signal failure upstream clearly
         throw new Error(initError);
     }
 
-    // Final check just in case (should be redundant if logic above is sound)
+    // Final check: if after all this, app is still null, something is very wrong.
     if (!app) {
-        const finalError = initError || "Firebase Admin app instance is unexpectedly null after initialization attempt.";
-        console.error("[Firebase Admin] Post-initialization check failed: App is null.", finalError);
-        isInitialized = false;
-        throw new Error(finalError);
+        initError = initError || "Firebase Admin app instance is unexpectedly null after initialization attempt.";
+        console.error("[Firebase Admin] Post-initialization check failed: App is null.", initError);
+        throw new Error(initError);
     }
 
+    // If we reached here, initialization was successful (or an existing valid app was found).
+    // isInitialized was already set to true at the start of the attempt.
+    initError = null; // Clear error on success
     return app;
 }
 
-// Export the initialization error for checks elsewhere if needed
+/**
+ * Gets the stored initialization error message, if any.
+ * @returns {string | null} The error message string or null if initialization was successful or not yet attempted.
+ */
 export function getAdminInitError(): string | null {
-    // This function now mainly reflects errors *during* the last init attempt.
-    // If `initializeAdminApp` throws, this might not be the most accurate state.
     return initError;
 }
-
-    
