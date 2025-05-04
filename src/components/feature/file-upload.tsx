@@ -25,7 +25,7 @@ interface FileUploadProps {
   buttonVariant?: ButtonProps['variant'];
   buttonSize?: ButtonProps['size'];
   // Updated callback to receive metadata object
-  onUploadSuccess?: (metadata: FileUploadMetadata) => void;
+  onUploadSuccess?: (metadata: FileUploadMetadata) => void | Promise<void>; // Allow async callback
 }
 
 export function FileUpload({
@@ -67,6 +67,7 @@ export function FileUpload({
 
     try {
         // 1. Upload file to Firebase Storage
+        console.log("[FileUpload] Calling uploadFileToStorage...");
         const downloadURL = await uploadFileToStorage(
             file,
             'audiobooks/', // Store in 'audiobooks/' folder
@@ -74,6 +75,7 @@ export function FileUpload({
                 setUploadProgress(progress); // Update progress state
             }
         );
+        console.log("[FileUpload] uploadFileToStorage finished successfully. URL:", downloadURL); // <-- Add log
 
         // 2. Prepare metadata for Firestore (without text content)
         const metadata: FileUploadMetadata = {
@@ -83,7 +85,7 @@ export function FileUpload({
             storageUrl: downloadURL,
         };
 
-        console.log("[FileUpload] Upload successful, metadata prepared:", metadata);
+        console.log("[FileUpload] Metadata prepared:", metadata);
 
         toast({
             title: "Upload Successful",
@@ -91,13 +93,19 @@ export function FileUpload({
         });
 
       // 3. Call the success callback with the metadata
-      onUploadSuccess?.(metadata);
+      if (onUploadSuccess) {
+        console.log("[FileUpload] Calling onUploadSuccess..."); // <-- Add log
+        await onUploadSuccess(metadata); // Await if it's async
+        console.log("[FileUpload] onUploadSuccess finished."); // <-- Add log
+      } else {
+        console.log("[FileUpload] No onUploadSuccess callback provided.");
+      }
 
     } catch (error: unknown) {
-      console.error("Error uploading file (FileUpload component):", error);
+      console.error("Error during file upload process (FileUpload component):", error); // Log context
       let errorMessage = "Could not upload the file.";
       if (error instanceof Error) {
-        errorMessage = error.message; // Use the specific error from the storage service
+        errorMessage = error.message; // Use the specific error from the storage service or addBook
       }
       toast({
         variant: "destructive",
@@ -149,3 +157,4 @@ export function FileUpload({
     </>
   );
 }
+

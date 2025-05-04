@@ -28,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-// Import TTS functions
+// Import Browser TTS functions
 import { speakText, pauseSpeech, resumeSpeech, stopSpeech, getCurrentUtteranceText } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
 import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput, type Question } from '@/ai/flows/generate-quiz-questions';
@@ -37,6 +37,8 @@ import { cn } from '@/lib/utils';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { signOut } from 'firebase/auth';
 import { convertFileToText } from '@/services/file-conversion'; // Keep for extracting text on demand
+// Remove direct import of ai-instance to prevent bundling server-side code on client
+// import { ai, isAiInitialized, aiInitializationError } from '@/ai/ai-instance';
 
 
 // Define a type for a book including its content and Firestore ID
@@ -138,18 +140,20 @@ function HomeContent() {
    }, [user, authLoading, toast]); // Added authLoading dependency
 
 
-   const addBook = useCallback(async (metadata: FileUploadMetadata) => {
+    const addBook = useCallback(async (metadata: FileUploadMetadata) => {
         if (!user) {
             toast({ variant: "destructive", title: "Not Logged In", description: "You must be logged in to add books." });
-            return;
+            console.error("[addBook] User not logged in.");
+            return; // Return here to prevent further execution
         }
          if (!db) {
             console.error("[Firestore] Firestore instance (db) is not available. Cannot add book.");
             toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database to save the book." });
-            return;
+            return; // Return here
          }
 
         try {
+            console.log("[addBook] Preparing to add book metadata:", metadata); // <-- Add log
             const booksCollection = collection(db, 'books');
             // Prepare data for Firestore, using metadata from storage upload
             // textContent is NOT included here, it's loaded on demand
@@ -162,8 +166,9 @@ function HomeContent() {
                 createdAt: serverTimestamp(), // Use Firestore server timestamp
                 audioStorageUrl: null, // Initialize audio URL field explicitly
             };
+            console.log("[addBook] Calling addDoc..."); // <-- Add log
             const docRef = await addDoc(booksCollection, newBookData);
-            console.log("[Firestore] Book added to Firestore with ID: ", docRef.id);
+            console.log("[Firestore] Book added to Firestore with ID: ", docRef.id); // <-- Add log
             toast({ // Move toast here to confirm DB entry
                 title: "Book Added",
                 description: `"${metadata.fileName}" added to your library.`,
@@ -572,10 +577,11 @@ function HomeContent() {
         toast({ variant: "destructive", title: "Authentication Required", description: "Please log in to use AI features." });
         return;
     }
-    if (!ai) { // Check if Genkit AI instance is available
-        toast({ variant: "destructive", title: "AI Service Error", description: aiInitializationError || "AI service is not initialized. Check server logs and API key." });
-        return;
-    }
+    // Remove check for isAiInitialized/aiInitializationError as ai-instance is not imported here
+    // if (!isAiInitialized || !ai) { // Use Genkit status flags
+    //     toast({ variant: "destructive", title: "AI Service Error", description: aiInitializationError || "AI service is not initialized. Check server logs and API key." });
+    //     return;
+    // }
 
 
     setSummaryState({ loading: true, data: null, error: null });
@@ -592,7 +598,7 @@ function HomeContent() {
       let userFriendlyMessage = `Failed to generate summary. ${errorMessage}`;
        // Refine user message based on common error types caught by the flow
        if (errorMessage.includes('API key not valid') ||
-           errorMessage.includes('AI service not initialized') || // Added this check
+           // errorMessage.includes('AI service not initialized') || // Removed this check
            errorMessage.includes('server error') ||
            errorMessage.includes('Failed to fetch') ||
            errorMessage.includes('network error') ||
@@ -617,10 +623,11 @@ function HomeContent() {
         toast({ variant: "destructive", title: "Authentication Required", description: "Please log in to use AI features." });
         return;
     }
-     if (!ai) { // Check if Genkit AI instance is available
-        toast({ variant: "destructive", title: "AI Service Error", description: aiInitializationError || "AI service is not initialized. Check server logs and API key." });
-        return;
-    }
+     // Remove check for isAiInitialized/aiInitializationError
+    // if (!isAiInitialized || !ai) { // Use Genkit status flags
+    //     toast({ variant: "destructive", title: "AI Service Error", description: aiInitializationError || "AI service is not initialized. Check server logs and API key." });
+    //     return;
+    // }
 
 
     setQuizState({ loading: true, data: null, error: null });
@@ -641,7 +648,7 @@ function HomeContent() {
 
         // Refine message based on common flow errors
         if (errorMessage.includes('API key not valid') ||
-            errorMessage.includes('AI service not initialized') || // Added check
+            // errorMessage.includes('AI service not initialized') || // Removed check
             errorMessage.includes('invalid quiz data format') ||
             errorMessage.includes('Network error:') ||
             errorMessage.includes('rate limit exceeded') ||
@@ -710,6 +717,7 @@ function HomeContent() {
                    console.error("[Client] Raw Server Error Response Text:", rawErrorText);
                    errorData.error = `Server error ${response.status}. Response body could not be parsed.`;
               }
+              // Throw a new error including the status and message from the server if available
              throw new Error(`Server responded with ${response.status}: ${errorData.error || 'Failed to generate audio'}`);
          }
 
@@ -1075,7 +1083,8 @@ function HomeContent() {
                           <Button onClick={handleSummarize} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || summaryState.loading || textExtractionState.loading || !!textExtractionState.error || selectedBook.textContent.startsWith('Error loading text:') || !user}>
                             {summaryState.loading ? 'Generating...' : (summaryState.data ? 'Regenerate' : 'Generate Summary')}
                           </Button>
-                           {(aiInitializationError && !ai) && (<p className="text-xs text-destructive mt-2 text-center">{aiInitializationError}</p>)}
+                           {/* Remove UI feedback about AI service status based on removed imports */}
+                           {/* {(!isAiInitialized) && (<p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service not ready."}</p>)} */}
                         </AccordionContent>
                       </AccordionItem>
 
@@ -1123,7 +1132,8 @@ function HomeContent() {
                                {quizState.loading ? 'Generating...' : 'Generate Quiz'}
                              </Button>
                           )}
-                           {(aiInitializationError && !ai) && (<p className="text-xs text-destructive mt-2 text-center">{aiInitializationError}</p>)}
+                           {/* Remove UI feedback about AI service status */}
+                           {/* {(!isAiInitialized) && (<p className="text-xs text-destructive mt-2 text-center">{aiInitializationError || "AI Service not ready."}</p>)} */}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
@@ -1147,3 +1157,5 @@ export default function Home() {
       </SidebarProvider>
   );
 }
+
+

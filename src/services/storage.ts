@@ -20,9 +20,11 @@ export const uploadFileToStorage = (
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     if (!auth?.currentUser) {
+      console.error('[Storage] User not authenticated. Cannot upload file.');
       return reject(new Error('User not authenticated. Cannot upload file.'));
     }
     if (!storage) {
+        console.error('[Storage] Firebase Storage is not initialized.');
         return reject(new Error('Firebase Storage is not initialized.'));
     }
 
@@ -42,7 +44,8 @@ export const uploadFileToStorage = (
       (snapshot: UploadTaskSnapshot) => {
         // Observe state change events such as progress, pause, and resume
         const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        console.log(`[Storage] Upload is ${progress}% done`);
+        // console.log(`[Storage] Upload is ${progress}% done`); // Less verbose logging
+        if (progress === 100) console.log('[Storage] Upload 100% done, waiting for completion event...');
         onProgress?.(progress); // Call the progress callback if provided
 
         switch (snapshot.state) {
@@ -50,36 +53,40 @@ export const uploadFileToStorage = (
             console.log('[Storage] Upload is paused');
             break;
           case 'running':
-            console.log('[Storage] Upload is running');
+            // console.log('[Storage] Upload is running'); // Too noisy
             break;
         }
       },
       (error) => {
         // Handle unsuccessful uploads
-        console.error('[Storage] Upload failed:', error);
+        console.error('[Storage] Upload task failed:', error);
+        let errorMessage = `Upload failed: ${error.message}`;
         // A more detailed error handling could be added here based on error.code
         switch (error.code) {
           case 'storage/unauthorized':
-            reject(new Error('Permission denied. Check Firebase Storage security rules.'));
+            errorMessage = 'Permission denied. Check Firebase Storage security rules.';
             break;
           case 'storage/canceled':
-            reject(new Error('Upload canceled.'));
+            errorMessage = 'Upload canceled.';
             break;
           case 'storage/unknown':
-            reject(new Error('An unknown storage error occurred.'));
+            errorMessage = 'An unknown storage error occurred.';
             break;
-          default:
-            reject(new Error(`Upload failed: ${error.message}`));
         }
+        console.log('[Storage] Rejecting upload promise due to upload error.'); // <-- Add log
+        reject(new Error(errorMessage));
       },
       async () => {
         // Handle successful uploads on complete
+        console.log('[Storage] Upload task completed successfully. Getting download URL...');
         try {
           const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
           console.log('[Storage] File available at', downloadURL);
+          console.log('[Storage] Resolving upload promise.'); // <-- Add log
           resolve(downloadURL);
         } catch (getUrlError) {
-          console.error('[Storage] Failed to get download URL:', getUrlError);
+          console.error('[Storage] Failed to get download URL after upload:', getUrlError);
+          console.log('[Storage] Rejecting upload promise due to getDownloadURL error.'); // <-- Add log
           reject(new Error('Upload succeeded, but failed to get download URL.'));
         }
       }
@@ -89,3 +96,4 @@ export const uploadFileToStorage = (
 
 // TODO: Add function to delete files from storage when a book is deleted.
 // export const deleteFileFromStorage = async (storagePathOrUrl: string): Promise<void> => { ... }
+
