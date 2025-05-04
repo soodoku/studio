@@ -86,31 +86,22 @@ function HomeContent() {
   const [mounted, setMounted] = useState(false);
 
 
-  // The AuthProvider now handles showing loading/error states or rendering the children (this component)
-  // No need for a redirect effect here, as this component will only render when the user is authenticated.
-  // The redirect *from* /auth *to* / happens in AuthForm upon successful login/signup.
-  // useEffect(() => {
-  //   if (!authLoading && !user) {
-  //     router.push('/auth');
-  //   }
-  // }, [user, authLoading, router]);
-
-   // Fetch books from Firestore for the logged-in user
+  // Fetch books from Firestore for the logged-in user
    useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
     if (user && db) {
       setBooksLoading(true);
       const booksCollection = collection(db, 'books');
       const q = query(booksCollection, where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
 
-      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      unsubscribe = onSnapshot(q, (querySnapshot) => {
         const userBooks = querySnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
-          // textContent might not be stored, ensure it defaults safely
           textContent: doc.data().textContent || undefined,
-          // Make sure audioStorageUrl is included
           audioStorageUrl: doc.data().audioStorageUrl || undefined,
-          createdAt: doc.data().createdAt || serverTimestamp(), // Ensure createdAt exists
+          createdAt: doc.data().createdAt || serverTimestamp(),
         })) as BookItem[];
         setBooks(userBooks);
         setBooksLoading(false);
@@ -120,17 +111,27 @@ function HomeContent() {
         toast({ variant: "destructive", title: "Error Loading Books", description: "Could not fetch your bookshelf. Check Firestore rules or connection." });
         setBooksLoading(false);
       });
-
-      return () => unsubscribe();
     } else if (!db && user) {
         console.error("Firestore instance (db) is not available. Cannot fetch books.");
         toast({ variant: "destructive", title: "Database Error", description: "Could not connect to the database to fetch books." });
         setBooksLoading(false);
     } else {
+      // No user or db, clear books and stop loading
       setBooks([]);
       setBooksLoading(false);
+      if (!user && !authLoading) {
+         console.log("No user logged in, clearing books.");
+      }
     }
-  }, [user, toast]);
+
+    // Cleanup function
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+         console.log("Unsubscribed from book updates.");
+      }
+    };
+   }, [user, authLoading, toast]); // Added authLoading dependency
 
 
    const addBook = useCallback(async (metadata: FileUploadMetadata) => {
@@ -453,7 +454,7 @@ function HomeContent() {
             setCurrentSpeakingText(null); // Clear tracked text on natural end
           },
           (errorEvent) => { // onError
-            console.error("Speech error (onError callback):", errorEvent);
+            console.error("Speech error (onError callback):", errorEvent.error); // Log only the error string
             // Ignore "interrupted" error, as it's expected when stopping/starting new speech
             if (errorEvent.error !== 'interrupted' && errorEvent.error !== 'canceled') {
                 toast({
@@ -760,12 +761,6 @@ function HomeContent() {
   if (authLoading) {
       return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
   }
-  // This check is mostly redundant now due to AuthProvider handling loading/errors
-  // if (!mounted || isMobile === undefined || !user) {
-  //    // Show loading or placeholder during initial SSR/hydration or if not logged in
-  //    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
-  // }
-
 
   return (
     <>
@@ -1055,7 +1050,7 @@ function HomeContent() {
                                {quizState.loading ? 'Generating...' : 'Generate Quiz'}
                              </Button>
                           )}
-                           {quizState.error && quizState.error.includes('AI service not initialized') && (<p className="text-xs text-destructive mt-2 text-center">{quizState.error}</p>)}
+                           {quizState.error && quizState.error.includes('AI service not initialized') && (<p className="text-xs text-destructive mt-2 text-center">{summaryState.error}</p>)}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
@@ -1073,7 +1068,7 @@ function HomeContent() {
 // Wrap HomeContent with Providers
 export default function Home() {
   return (
-      // AuthProvider is in RootLayout now
+      // AuthProvider is in RootLayout now, no need to wrap here
       <SidebarProvider>
           <HomeContent />
       </SidebarProvider>
