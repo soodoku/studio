@@ -1,4 +1,3 @@
-
 // src/contexts/AuthContext.tsx
 'use client';
 
@@ -9,6 +8,7 @@ import { auth, firebaseConfigValid, initError } from '@/lib/firebase/clientApp';
 import { Loader2 } from 'lucide-react'; // For loading state
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // For error display
 import { Terminal } from 'lucide-react'; // Icon for alert
+import { useRouter } from 'next/navigation'; // Import for redirection
 
 interface AuthContextType {
   user: User | null;
@@ -32,6 +32,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(firebaseConfigValid);
   // Initialize authError state with the error potentially captured during clientApp initialization
   const [authError, setAuthError] = useState<string | null>(initError);
+  const router = useRouter(); // Initialize router
 
   useEffect(() => {
     // This effect runs only on the client side after mount.
@@ -108,7 +109,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
      );
    }
 
-  // 3. If not loading and no errors, render children with the current user state.
+   // 3. If not loading and no error, check if the user is logged in.
+   if (!user) {
+      // If not logged in, redirect to the auth page (client-side).
+      // Use an effect to avoid calling router.push during render.
+      if (typeof window !== 'undefined') {
+         // Check if already on the auth page to prevent loop
+         if (window.location.pathname !== '/auth') {
+            router.push('/auth');
+         }
+      }
+      // Return null or a minimal loading state while redirecting
+      return (
+          <div className="flex items-center justify-center min-h-screen">
+              <Loader2 className="h-16 w-16 animate-spin text-primary" />
+          </div>
+      );
+   }
+
+  // 4. If not loading, no errors, and user is logged in, render children.
   return (
     <AuthContext.Provider value={{ user, loading, authError }}>
       {children}

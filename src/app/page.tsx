@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -87,12 +86,14 @@ function HomeContent() {
   const [mounted, setMounted] = useState(false);
 
 
-  // Redirect to auth page if not logged in and auth is resolved
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth');
-    }
-  }, [user, authLoading, router]);
+  // The AuthProvider now handles showing loading/error states or rendering the children (this component)
+  // No need for a redirect effect here, as this component will only render when the user is authenticated.
+  // The redirect *from* /auth *to* / happens in AuthForm upon successful login/signup.
+  // useEffect(() => {
+  //   if (!authLoading && !user) {
+  //     router.push('/auth');
+  //   }
+  // }, [user, authLoading, router]);
 
    // Fetch books from Firestore for the logged-in user
    useEffect(() => {
@@ -736,6 +737,7 @@ function HomeContent() {
         // Reset all application state on logout
         handleGoBackToLibrary(); // Reset reader view first
         setBooks([]); // Clear books list
+        router.push('/auth'); // Redirect to auth page after logout
     } catch (error) {
         console.error("Logout failed:", error);
         toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out.' });
@@ -758,10 +760,11 @@ function HomeContent() {
   if (authLoading) {
       return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
   }
-  if (!mounted || isMobile === undefined || !user) {
-     // Show loading or placeholder during initial SSR/hydration or if not logged in
-     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
-  }
+  // This check is mostly redundant now due to AuthProvider handling loading/errors
+  // if (!mounted || isMobile === undefined || !user) {
+  //    // Show loading or placeholder during initial SSR/hydration or if not logged in
+  //    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
+  // }
 
 
   return (
