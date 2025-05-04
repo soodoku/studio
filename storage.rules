@@ -2,16 +2,27 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // Allow reads and writes only by the authenticated user who owns the files
-    // Files are stored under paths like 'audiobooks/{userId}/...' or 'audiobooks_generated/{userId}/...'
-    match /{prefix=**}/{userId}/{allPaths=**} {
+
+    // Original Uploads: Allow users to read/write files only within their own folder.
+    // Path: audiobooks/{userId}/{fileName}
+    match /audiobooks/{userId}/{allPaths=**} {
+      // Allow read/write (upload/download/delete) if the user is authenticated
+      // and the {userId} in the path matches their authentication UID.
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Example: If you needed public read access for generated audio (adjust path if needed)
-    // match /audiobooks_generated/{userId}/{allPaths=**} {
-    //   allow read; // Anyone can read generated audio
-    //   allow write: if request.auth != null && request.auth.uid == userId; // Only owner can write/overwrite
+    // Generated Audio Files: Allow users to read/write files only within their own folder.
+    // Path: audiobooks_generated/{userId}/{fileName}
+    match /audiobooks_generated/{userId}/{allPaths=**} {
+        // Allow read/write (upload/download/delete) if the user is authenticated
+        // and the {userId} in the path matches their authentication UID.
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Other paths (if any): Add more specific rules or deny access by default.
+    // Deny access to all other paths by default unless explicitly allowed.
+    // match /{allPaths=**} {
+    //   allow read, write: if false;
     // }
   }
 }

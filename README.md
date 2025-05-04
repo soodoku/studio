@@ -44,22 +44,19 @@ This is a Next.js application built with Firebase Studio that allows users to up
         # NEXT_PUBLIC_STORAGE_EMULATOR_PORT=9199     # Added for Storage Emulator
         ```
 
-    *   **Important**: Ensure you replace `"YOUR_..."` placeholders with your actual Firebase credentials. If you are using Firebase Studio, these variables might be injected automatically, but verify they are correct and not the placeholders.
+    *   **Important**: Ensure you replace `"YOUR_..."` placeholders with your actual Firebase credentials. If you are using Firebase Studio, these variables might be injected automatically, but verify they are correct and not the placeholders. **Especially `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, etc.**
 
 3.  **Configure and DEPLOY Firebase Security Rules (CRITICAL!)**:
-    *   **Firestore Rules:** Review and update `firestore.rules` to restrict document access to authenticated users based on their `userId`. Example rules are provided.
-    *   **Storage Rules:** Review and update `storage.rules` to restrict file access in Firebase Storage to authenticated users based on their `userId`. Example rules are provided.
-    *   **Deployment:** You MUST deploy these rules to your Firebase project using the Firebase CLI for them to take effect, especially in your public/live environment.
+    *   **Firestore Rules:** Review and update `firestore.rules` to restrict document access to authenticated users based on their `userId`. Example rules are provided. **Ensure they match your data structure and access patterns.**
+    *   **Storage Rules:** Review and update `storage.rules` to restrict file access in Firebase Storage to authenticated users based on their `userId` and the correct storage path (e.g., `audiobooks/{userId}/...`). Example rules are provided. **Ensure they match your file upload paths.**
+    *   **Deployment:** You **MUST** deploy these rules to your Firebase project using the Firebase CLI for them to take effect, especially in your public/live environment. If you don't deploy, default (often insecure or overly restrictive) rules might apply.
         *   Install Firebase CLI: `npm install -g firebase-tools` (if not already installed).
         *   Login: `firebase login`
         *   **IMPORTANT:** Select the correct Firebase project: `firebase use YOUR_FIREBASE_PROJECT_ID` (Replace `YOUR_FIREBASE_PROJECT_ID` with the ID of your *live* project). Verify the selected project with `firebase projects:list`.
         *   Deploy rules:
             ```bash
-            # Deploy Firestore rules
-            firebase deploy --only firestore:rules
-
-            # Deploy Storage rules
-            firebase deploy --only storage:rules
+            # Deploy Firestore rules AND Storage rules
+            firebase deploy --only firestore:rules,storage:rules
             ```
         *   **Note:** If you don't have a `firebase.json` file, the CLI might prompt you to create one or specify the rule files directly. Ensure `firebase.json` correctly points to `firestore.rules` and `storage.rules` if you use it. You can create a basic one like this:
             ```json
@@ -73,7 +70,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
               }
             }
             ```
-        *   **Verification:** After deploying, test file uploads and data access in your deployed application to confirm the rules are working as expected. Check the Firebase Console (Firestore > Rules and Storage > Rules tabs) to see the deployed rules and use the simulator.
+        *   **Verification:** After deploying, go to the Firebase Console (Firestore > Rules and Storage > Rules tabs) to see the deployed rules. **Use the Rules Simulator** in the console to test specific read/write operations for different users and paths to confirm they work as expected. Test file uploads and data access in your deployed application to confirm the "permission denied" error is resolved.
 
 4.  **Configure Google AI (Genkit)**:
     *   Obtain an API key for Google Generative AI (e.g., Gemini) from [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -227,20 +224,20 @@ To publish your PWA to the Google Play Store, you need to wrap it using a Truste
 ## Troubleshooting
 
 *   **Firebase Errors (Auth/Firestore/Storage)**:
-    *   Ensure all `NEXT_PUBLIC_FIREBASE_...` variables in `.env.local` are correct and **not** placeholder values. If using Firebase Studio, double-check the injected environment variables.
-    *   Verify Email/Password authentication, Firestore, and Storage are enabled in your Firebase project console.
-    *   **Check Deployed Firestore and Storage Rules:** Ensure `firestore.rules` and `storage.rules` have been **deployed** using the Firebase CLI (`firebase deploy --only firestore:rules` and `firebase deploy --only storage:rules`). Check the Rules tab in the Firebase console. Deployed rules must allow the necessary read/write access for authenticated users based on their `request.auth.uid`.
-    *   Check the browser console and `src/lib/firebase/clientApp.ts` for specific initialization error messages.
-    *   **"Permission Denied" errors (Storage/Firestore):** This *usually* means the security rules are incorrect or haven't been deployed correctly. Verify the `match` paths in your rules files align with the paths used in your code (`src/services/storage.ts` and `src/app/page.tsx`) and that the `request.auth.uid == userId` (or similar) condition is met.
+    *   **Verify `.env.local`:** Ensure all `NEXT_PUBLIC_FIREBASE_...` variables are correct and **not** placeholder values (like `YOUR_API_KEY`). If using Firebase Studio, double-check the injected environment variables in the deployed environment. **This is the most common cause of "invalid key" errors.**
+    *   **Enable Services:** Verify Email/Password authentication, Firestore, and Storage are enabled in your Firebase project console.
+    *   **Check Deployed Firestore and Storage Rules:** Ensure `firestore.rules` and `storage.rules` have been **deployed** using the Firebase CLI (`firebase deploy --only firestore:rules,storage:rules`). Check the Rules tab in the Firebase console and use the **Rules Simulator** to test access. **Deployed rules must allow the necessary read/write access for authenticated users based on their `request.auth.uid` and the correct paths (e.g., `audiobooks/{userId}/...`).**
+    *   **Check Browser Console & `clientApp.ts`:** Look for specific initialization error messages in the browser console and review logs from `src/lib/firebase/clientApp.ts`.
+    *   **"Permission Denied" errors (Storage/Firestore):** This *usually* means the security rules are incorrect or haven't been deployed correctly. Verify the `match` paths in your rules files align with the paths used in your code (`src/services/storage.ts` and `src/app/page.tsx`) and that the `request.auth.uid == userId` (or similar) condition is met. Use the Rules Simulator!
 *   **Genkit Errors (Summarize/Quiz)**:
-    *   Ensure the `GOOGLE_GENAI_API_KEY` in `.env.local` is correct and **not** the placeholder value.
-    *   Confirm the `npm run genkit:dev` process is running in a separate terminal.
-    *   Check the **Genkit terminal** for errors related to API key validation or model access.
-    *   Make sure the Google AI (Generative Language API) is enabled in your Google Cloud project associated with the API key.
+    *   **Verify `GOOGLE_GENAI_API_KEY`:** Ensure the `GOOGLE_GENAI_API_KEY` in `.env.local` is correct and **not** the placeholder value.
+    *   **Check Genkit Server:** Confirm the `npm run genkit:dev` process is running in a separate terminal.
+    *   **Check Genkit Terminal Logs:** Look for errors related to API key validation or model access in the **Genkit terminal**.
+    *   **Enable Google AI API:** Make sure the Google AI (Generative Language API) is enabled in your Google Cloud project associated with the API key.
 *   **PDF Text Extraction Errors (`pdf.worker.min.mjs` Not Found / Worker Errors)**:
-    *   Ensure the `pdfjs-dist` worker file (`pdf.worker.min.mjs`) is correctly copied by Webpack (check `next.config.ts`).
+    *   **Ensure Worker Copy:** Confirm `pdfjs-dist` worker file (`pdf.worker.min.mjs`) is copied by Webpack (check `next.config.ts`).
     *   **Verify Worker Path:** In your browser's DevTools (Network tab), check if the request for `/_next/static/chunks/pdf.worker.min.mjs` returns a 200 status code. If it's a 404, the path is wrong or the file wasn't copied correctly. The path in `src/services/file-conversion.ts` must exactly match where Webpack places the file.
-    *   Check browser console for errors related to PDF parsing or worker loading (`Failed to fetch dynamically imported module`, `Setting up fake worker failed`, etc.). Password-protected or corrupted PDFs will cause errors.
+    *   **Check Browser Console:** Look for errors related to PDF parsing or worker loading (`Failed to fetch dynamically imported module`, `Setting up fake worker failed`, etc.). Password-protected or corrupted PDFs will cause errors.
 *   **Text-to-Speech Issues**:
     *   TTS relies on the browser's built-in capabilities (SpeechSynthesis API). Ensure your browser supports it. Some browsers/OS might have limited voice options or require specific settings.
 *   **PWA/Android Testing Issues**:

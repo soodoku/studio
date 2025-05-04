@@ -1,13 +1,39 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Secure user-specific book data
+
+    // Books Collection:
+    // Allow users to read, create, update, and delete their own book records.
+    // Users can only list books belonging to them.
     match /books/{bookId} {
-      // Allow read, update, delete only if the user ID in the request matches the document's userId field
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
-      // Allow create only if the user ID in the request matches the userId field being set in the new document
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      // Read: Allow if user is authenticated and the document's userId matches their uid.
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      // Create: Allow if user is authenticated and the new document's userId matches their uid.
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+
+      // Update: Allow if user is authenticated and the document's userId matches their uid.
+      // Optional: Prevent changing the userId after creation.
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                      && request.resource.data.userId == resource.data.userId; // Prevent changing owner
+
+      // Delete: Allow if user is authenticated and the document's userId matches their uid.
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      // List (Query): Allow authenticated users to query books, but ONLY if they filter by their own userId.
+      // This rule applies to the collection, not individual documents.
+      // Note: Firestore rules cannot enforce *which* fields are queried, only that the userId filter is present.
+      // The actual query filtering happens in the client-side code (src/app/page.tsx).
+      // This rule is implicitly covered by the individual document read rule when combined with the client query.
+      // No explicit `allow list` is needed here if the client query is correctly filtered.
     }
-    // Add rules for other collections here if needed
+
+    // Add rules for other collections if needed.
+    // Example: User profiles
+    // match /users/{userId} {
+    //   allow read: if true; // Example: Public profiles
+    //   allow write: if request.auth != null && request.auth.uid == userId; // Only owner can write
+    // }
   }
 }
