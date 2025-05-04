@@ -26,14 +26,19 @@ let wasCancelledPrematurely = false;
  */
 export function getCurrentUtteranceText(): string {
     // Return the text associated with the *current* utterance object, if it exists
-    return utterance ? utterance.text : '';
+    // Check against internal state as well, as utterance might be briefly non-null during cleanup
+    if (utterance && (isSpeakingInternal || isPausedInternal)) {
+        return utterance.text;
+    }
+    return ''; // Return empty if not actively speaking or paused
 }
+
 
 /**
  * Speaks the given text using the browser's TTS engine.
  * @param text The text to speak.
  * @param onEnd Callback function executed when speech ends naturally or is stopped explicitly.
- * @param onError Callback function executed on speech error.
+ * @param onError Callback function executed on speech error (excluding expected interruptions).
  * @param onStart Callback function executed when speech begins.
  * @param onPause Callback function executed when speech is paused.
  * @param onResume Callback function executed when speech resumes from pause.
@@ -56,14 +61,14 @@ export function speakText(
 
   // If called with the same text and it's paused, resume.
   if (isPausedInternal && utterance && utterance.text === text) {
-    console.log("Resuming existing paused speech for the same text.");
+    console.log("[TTS] Resuming existing paused speech for the same text.");
     resumeSpeech();
     return;
   }
 
   // If speaking or paused (even if different text), stop before starting new
   if (synth.speaking || synth.paused) {
-     console.log("Speech active, stopping before starting new.");
+     console.log("[TTS] Speech active, stopping before starting new.");
      stopSpeech(true); // Mark as premature cancellation
   } else {
      // If nothing is active, ensure cancellation flag is reset
@@ -86,7 +91,7 @@ export function speakText(
     isSpeakingInternal = true;
     isPausedInternal = false;
     wasCancelledPrematurely = false; // Reset flag on successful start
-    console.log('Speech started');
+    console.log('[TTS] Speech started');
     onStartCallback?.();
   };
 
@@ -96,27 +101,30 @@ export function speakText(
      const isExplicitStop = !isSpeakingInternal && !isPausedInternal && !wasCancelledPrematurely; // Stopped via stopSpeech(false) -> cancel()
      const isPrematureCancel = wasCancelledPrematurely;
 
-     console.log(`Speech onend event. NaturalEnd: ${isNaturalEnd}, ExplicitStop: ${isExplicitStop}, PrematureCancel: ${isPrematureCancel}`);
+     console.log(`[TTS] Speech onend event. NaturalEnd: ${isNaturalEnd}, ExplicitStop: ${isExplicitStop}, PrematureCancel: ${isPrematureCancel}`);
+
+    // Capture the utterance that ended before resetting state
+    const endedUtterance = utterance;
 
     // Reset internal state regardless of reason for 'onend'
     isSpeakingInternal = false;
     isPausedInternal = false;
-    const endedUtterance = utterance; // Capture utterance before nulling
     utterance = null; // Clear the reference
+
 
     // Only call the external onEnd callback if it wasn't a premature cancellation
     if (!isPrematureCancel) {
-      console.log("Firing external onEnd callback.");
+      console.log("[TTS] Firing external onEnd callback.");
       onEndCallback?.();
     } else {
-      console.log("Skipping external onEnd callback due to premature cancellation.");
+      console.log("[TTS] Skipping external onEnd callback due to premature cancellation.");
     }
 
      // Clear currentText only if the ended utterance matches the stored text
      // (prevents clearing if a new utterance started quickly)
      if (endedUtterance && currentText === endedUtterance.text) {
          currentText = '';
-         console.log("Cleared currentText.");
+         console.log("[TTS] Cleared currentText.");
      }
 
 
@@ -129,10 +137,10 @@ export function speakText(
     if (isSpeakingInternal) {
         isPausedInternal = true;
         isSpeakingInternal = false;
-        console.log('Speech paused');
+        console.log('[TTS] Speech paused');
         onPauseCallback?.();
     } else {
-        console.log("onpause event ignored, wasn't speaking.");
+        console.log("[TTS] onpause event ignored, wasn't speaking.");
     }
   };
 
@@ -141,31 +149,40 @@ export function speakText(
     if (isPausedInternal) {
         isPausedInternal = false;
         isSpeakingInternal = true;
-        console.log('Speech resumed');
+        console.log('[TTS] Speech resumed');
         onResumeCallback?.();
     } else {
-        console.log("onresume event ignored, wasn't paused.");
+        console.log("[TTS] onresume event ignored, wasn't paused.");
     }
   };
 
   utterance.onerror = (event) => {
-    console.error('Speech Synthesis Error:', event);
+    console.error('[TTS] Speech Synthesis Error:', event.error, event); // Log the specific error string
     const erroredUtterance = utterance; // Capture utterance before nulling
 
-    // Reset internal state on error
+    // Check if the error is the expected "interrupted" error caused by cancel()
+    if (event.error === 'interrupted') {
+        console.log('[TTS] Speech interrupted (likely due to cancel()), ignoring error callback.');
+        // State reset will happen in onend which follows cancel()
+    } else {
+        // Handle unexpected errors
+        console.error('[TTS] Unexpected speech error occurred.');
+        // Call external error callback for genuine errors
+        onErrorCallback?.(event);
+    }
+
+    // Reset internal state on ANY error (interrupted or otherwise)
+    // This might be redundant if 'onend' always follows 'interrupted', but safe to include
     isSpeakingInternal = false;
     isPausedInternal = false;
     utterance = null;
     wasCancelledPrematurely = false; // Reset flag
 
-    // Call external error callback
-    onErrorCallback?.(event);
-
-     // Clear currentText only if the errored utterance matches the stored text
-     if (erroredUtterance && currentText === erroredUtterance.text) {
-         currentText = '';
-          console.log("Cleared currentText due to error.");
-     }
+    // Clear currentText only if the errored utterance matches the stored text
+    if (erroredUtterance && currentText === erroredUtterance.text) {
+        currentText = '';
+        console.log("[TTS] Cleared currentText due to error/interruption.");
+    }
   };
 
   // Optional: Configure voice, rate, pitch if needed
@@ -174,7 +191,7 @@ export function speakText(
   // utterance.rate = 1; // From 0.1 to 10
   // utterance.pitch = 1; // From 0 to 2
 
-  console.log("Calling synth.speak() with text:", text.substring(0, 50)+"...");
+  console.log("[TTS] Calling synth.speak() with text:", text.substring(0, 50)+"...");
   synth.speak(utterance);
 }
 
@@ -186,11 +203,11 @@ export function pauseSpeech(): void {
      const synth = window.speechSynthesis;
      // Only pause if it's actually speaking
      if (synth.speaking && !synth.paused && isSpeakingInternal) {
-         console.log("Requesting synth.pause().");
+         console.log("[TTS] Requesting synth.pause().");
          synth.pause();
          // State update relies on the onpause listener
      } else {
-         console.log("Ignoring pause request: not speaking or already paused.");
+         console.log("[TTS] Ignoring pause request: not speaking or already paused.");
      }
   }
 }
@@ -203,11 +220,11 @@ export function resumeSpeech(): void {
       const synth = window.speechSynthesis;
       // Only resume if it's actually paused
       if (synth.paused && isPausedInternal) {
-          console.log("Requesting synth.resume().");
+          console.log("[TTS] Requesting synth.resume().");
           synth.resume();
           // State update relies on the onresume listener
       } else {
-           console.log("Ignoring resume request: not paused.");
+           console.log("[TTS] Ignoring resume request: not paused.");
       }
   }
 }
@@ -221,20 +238,22 @@ export function stopSpeech(premature = false): void {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
      const synth = window.speechSynthesis;
      if (synth.speaking || synth.paused) {
-         console.log(`Requesting synth.cancel() (premature: ${premature})`);
+         console.log(`[TTS] Requesting synth.cancel() (premature: ${premature})`);
          wasCancelledPrematurely = premature; // Set flag *before* cancelling
 
-         // Cancel effectively stops speech and triggers the 'onend' event listener eventually.
+         // Cancel effectively stops speech and should trigger the 'onend' event listener eventually.
+         // It might also trigger 'onerror' with 'interrupted'.
          synth.cancel();
 
-         // Immediately reset internal state for responsiveness, 'onend' handles final cleanup and external callback logic
+         // Immediately reset internal state for responsiveness, 'onend'/'onerror' handles final cleanup.
+         // Don't nullify 'utterance' here immediately; let the event handlers do it.
          isSpeakingInternal = false;
          isPausedInternal = false;
-         // We don't nullify 'utterance' here immediately; 'onend' handles that.
+
      } else {
           // If nothing was active, ensure the flag is reset.
           wasCancelledPrematurely = false;
-          console.log("Ignoring stop request: nothing active.");
+          console.log("[TTS] Ignoring stop request: nothing active.");
      }
   } else {
      wasCancelledPrematurely = false; // Ensure flag is reset if synth unavailable
