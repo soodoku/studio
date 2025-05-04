@@ -12,7 +12,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
 
 2.  **Configure Firebase**:
     *   Create a Firebase project at [https://console.firebase.google.com/](https://console.firebase.google.com/).
-    *   Enable **Authentication** (Email/Password provider) and **Firestore Database** in your Firebase project.
+    *   Enable **Authentication** (Email/Password provider), **Firestore Database**, and **Storage** in your Firebase project.
     *   Go to Project settings > General > Your apps.
     *   Register a new Web app.
     *   Copy the Firebase configuration details.
@@ -40,11 +40,27 @@ This is a Next.js application built with Firebase Studio that allows users to up
         # NEXT_PUBLIC_AUTH_EMULATOR_PORT=9099
         # NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST=localhost
         # NEXT_PUBLIC_FIRESTORE_EMULATOR_PORT=8080
+        # NEXT_PUBLIC_STORAGE_EMULATOR_HOST=localhost # Added for Storage Emulator
+        # NEXT_PUBLIC_STORAGE_EMULATOR_PORT=9199     # Added for Storage Emulator
         ```
 
     *   **Important**: Ensure you replace `"YOUR_..."` placeholders with your actual Firebase credentials. If you are using Firebase Studio, these variables might be injected automatically, but verify they are correct and not the placeholders.
 
-3.  **Configure Google AI (Genkit)**:
+3.  **Configure Firebase Security Rules**:
+    *   **Firestore Rules:** Update `firestore.rules` to restrict document access to authenticated users based on their `userId`. Example rules are provided in the file.
+    *   **Storage Rules:** Update `storage.rules` to restrict file access in Firebase Storage to authenticated users based on their `userId`. Example rules are provided in the file.
+    *   **Deployment:** You need the Firebase CLI to deploy these rules.
+        *   Install Firebase CLI: `npm install -g firebase-tools`
+        *   Login: `firebase login`
+        *   Select your project: `firebase use YOUR_FIREBASE_PROJECT_ID`
+        *   Deploy rules:
+            ```bash
+            firebase deploy --only firestore:rules
+            firebase deploy --only storage:rules
+            ```
+        *   **Note:** If you don't have a `firebase.json` file, the CLI might prompt you to create one or specify the rule files directly. Ensure `firebase.json` correctly points to `firestore.rules` and `storage.rules` if you use it.
+
+4.  **Configure Google AI (Genkit)**:
     *   Obtain an API key for Google Generative AI (e.g., Gemini) from [Google AI Studio](https://aistudio.google.com/app/apikey).
     *   Add the API key to your `.env.local` file:
         ```dotenv
@@ -52,7 +68,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
         ```
     *   **Crucial**: Ensure this key is NOT the placeholder value.
 
-4.  **Run Genkit Development Server**:
+5.  **Run Genkit Development Server**:
     *   This server handles the AI flow executions (summarization, quiz generation).
     *   **IMPORTANT**: This server process needs access to the `GOOGLE_GENAI_API_KEY` environment variable defined in your `.env.local` file. Ensure your terminal session or run configuration makes these variables available to the script. The `npm run genkit:dev` script should load `.env.local` automatically in most setups.
     *   Open a **separate terminal** and run:
@@ -62,7 +78,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
     *   Watch this terminal for logs, including messages about the Google GenAI API key status.
     *   Keep this terminal running while developing.
 
-5.  **Run Next.js Development Server**:
+6.  **Run Next.js Development Server**:
     *   In your main terminal, run:
         ```bash
         npm run dev
@@ -72,14 +88,16 @@ This is a Next.js application built with Firebase Studio that allows users to up
 ## Features
 
 *   **Authentication**: User login and sign-up using Email/Password via Firebase Auth.
-*   **File Upload**: Upload PDF and ePUB files.
+*   **File Upload**: Upload PDF and ePUB files to Firebase Storage.
 *   **Text Extraction**: Extracts text content from uploaded PDF files using `pdfjs-dist`. (ePUB support requires additional libraries).
-*   **Text-to-Speech**: Converts the extracted text into audio using the browser's SpeechSynthesis API.
-*   **Audio Playback**: Play, pause, resume, and stop controls for the generated audio.
+*   **Text-to-Speech (Browser)**: Converts the extracted text into audio using the browser's SpeechSynthesis API for immediate playback.
+*   **Audio Playback (Browser TTS)**: Play, pause, resume, and stop controls for the browser-generated audio.
+*   **Audio File Generation (Simulated)**: Placeholder for generating persistent audio files (e.g., MP3) and storing them in Firebase Storage.
+*   **Audio File Playback**: Playback controls for persisted audio files stored in Firebase Storage.
 *   **Book Reading View**: Displays the extracted text content for reading.
 *   **AI Summarization**: Generate concise summaries of the book content using Genkit and Google AI.
 *   **AI Quiz Generation**: Create multiple-choice quizzes based on the book content using Genkit and Google AI. Quiz answers are evaluated and scored.
-*   **Firestore Integration**: Stores user book data (name, content, user ID) securely in Firestore, ensuring data privacy via security rules.
+*   **Firestore Integration**: Stores user book metadata (name, storage URL, user ID) securely in Firestore, ensuring data privacy via security rules. Uploaded files are stored in Firebase Storage.
 *   **Real-time Updates**: Bookshelf updates in real-time using Firestore snapshots.
 *   **Responsive Design**: Adapts layout for mobile and desktop views.
 *   **Collapsible Sidebar**: Sidebar can be collapsed to icon view on desktop.
@@ -173,6 +191,7 @@ To publish your PWA to the Google Play Store, you need to wrap it using a Truste
 *   `src/services/`: Service functions for external interactions.
     *   `src/services/file-conversion.ts`: Handles PDF text extraction using `pdfjs-dist`.
     *   `src/services/tts.ts`: Handles Text-to-Speech operations using browser API.
+    *   `src/services/storage.ts`: Handles file uploads to Firebase Storage.
 *   `src/ai/`: Genkit AI related files.
     *   `src/ai/ai-instance.ts`: Genkit initialization and Google AI plugin configuration.
     *   `src/ai/dev.ts`: Entry point for the Genkit development server.
@@ -180,6 +199,8 @@ To publish your PWA to the Google Play Store, you need to wrap it using a Truste
 *   `public/`: Static assets.
     *   `public/manifest.json`: PWA manifest file.
     *   `public/icon-*.png`: Application icons for PWA (ensure these exist).
+*   `firestore.rules`: Firebase Firestore security rules.
+*   `storage.rules`: Firebase Storage security rules.
 *   `.env.local`: Environment variables (Firebase keys, AI keys). **DO NOT COMMIT THIS FILE**.
 *   `next.config.ts`: Next.js configuration (includes webpack config for pdf.js worker).
 *   `tailwind.config.ts`: Tailwind CSS configuration.
@@ -189,9 +210,10 @@ To publish your PWA to the Google Play Store, you need to wrap it using a Truste
 
 ## Troubleshooting
 
-*   **Firebase Errors (Auth/Firestore)**:
+*   **Firebase Errors (Auth/Firestore/Storage)**:
     *   Ensure all `NEXT_PUBLIC_FIREBASE_...` variables in `.env.local` are correct and **not** placeholder values. If using Firebase Studio, double-check the injected environment variables.
-    *   Verify Email/Password authentication and Firestore are enabled in your Firebase project console.
+    *   Verify Email/Password authentication, Firestore, and Storage are enabled in your Firebase project console.
+    *   **Check Firestore and Storage Rules:** Ensure `firestore.rules` and `storage.rules` allow the necessary read/write access for authenticated users. Use the Firebase console simulators to test rules. Deploy rules using `firebase deploy --only firestore:rules` and `firebase deploy --only storage:rules`.
     *   Check the browser console and `src/lib/firebase/clientApp.ts` for specific initialization error messages.
 *   **Genkit Errors (Summarize/Quiz)**:
     *   Ensure the `GOOGLE_GENAI_API_KEY` in `.env.local` is correct and **not** the placeholder value.
@@ -215,3 +237,4 @@ To publish your PWA to the Google Play Store, you need to wrap it using a Truste
     *   **Address Bar Showing**: Usually means `assetlinks.json` is missing, incorrect, or not accessible on your server at the correct path (`/.well-known/assetlinks.json`). Use Google's [Asset Link Testing Tool](https://developers.google.com/digital-asset-links/tools/generator).
     *   **Build Errors**: Check JDK/Android Studio setup and Bubblewrap output for specific error messages.
     *   **Play Store Rejection**: Review Google Play policies carefully. Common issues involve metadata, permissions, or content.
+
