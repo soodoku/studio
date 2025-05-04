@@ -27,20 +27,20 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true); // Start true, wait for auth check/listener
-  const [authError, setAuthError] = useState<string | null>(initError); // Use initError captured during Firebase setup
-  const router = useRouter(); // Hook 1
-  const pathname = usePathname(); // Hook 2
-  const [isClient, setIsClient] = useState(false); // Track if component has mounted
+  const [user, setUser] = useState<User | null>(null); // Hook 1
+  const [loading, setLoading] = useState(true); // Hook 2
+  const [authError, setAuthError] = useState<string | null>(initError); // Hook 3
+  const [isClient, setIsClient] = useState(false); // Hook 4
+  const router = useRouter(); // Hook 5
+  const pathname = usePathname(); // Hook 6
 
   // Effect to set isClient to true after mounting
-  useEffect(() => { // Hook 3
+  useEffect(() => { // Effect 1
     setIsClient(true);
   }, []);
 
-  // Main effect for auth state and redirection
-  useEffect(() => { // Hook 4
+  // Main effect for auth state subscription
+  useEffect(() => { // Effect 2
     // This effect runs only on the client side after mount.
 
     // 1. Check if Firebase config was fundamentally invalid from the start
@@ -72,30 +72,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log("AuthProvider: Auth state changed.", currentUser ? `User: ${currentUser.uid}` : "No user");
         setUser(currentUser);
         setAuthError(null); // Clear errors on successful state change
-
-        // --- Redirection Logic ---
-        // Perform redirection checks *after* user state is updated
-        if (currentUser && pathname === '/auth') {
-            // Logged in, but on auth page -> redirect to home
-            console.log("AuthProvider: User logged in, redirecting from /auth to /");
-            router.push('/');
-            // Keep loading true until redirect completes? Or set false and let UI handle intermediate state?
-            // Setting loading false here is generally okay.
-            setLoading(false);
-        } else if (!currentUser && pathname !== '/auth') {
-            // Not logged in, and not on auth page -> redirect to auth
-            console.log("AuthProvider: User not logged in, redirecting to /auth");
-            router.push('/auth');
-            // Keep loading true until redirect completes?
-            setLoading(false);
-        } else {
-            // User state matches route (logged in and not on /auth, or not logged in and on /auth)
-            // Or redirection is already in progress
-            console.log("AuthProvider: Auth state matches route or redirection in progress.");
-            setLoading(false); // Auth state resolved, stop loading
-        }
-        // --- End Redirection Logic ---
-
+        setLoading(false); // Set loading false *after* user state is updated
       },
       (error) => {
         // Handle errors during the subscription itself
@@ -113,7 +90,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     // Dependencies: Only run once on mount after initial checks
-  }, [pathname, router]); // Added pathname and router as dependencies for redirection logic
+  }, []); // Empty dependency array, runs only once
+
+
+  // Effect for client-side redirection logic, dependent on user, loading, pathname, router
+   useEffect(() => { // Effect 3
+     if (isClient && !loading) { // Only run redirection logic on client, after initial loading
+       console.log("AuthProvider: Checking redirection. User:", !!user, "Path:", pathname);
+       if (user && pathname === '/auth') {
+           // Logged in, but on auth page -> redirect to home
+           console.log("AuthProvider: User logged in, redirecting from /auth to /");
+           router.push('/');
+       } else if (!user && pathname !== '/auth') {
+           // Not logged in, and not on auth page -> redirect to auth
+           console.log("AuthProvider: User not logged in, redirecting to /auth");
+           router.push('/auth');
+       }
+        // No else needed - if conditions aren't met, no redirect is necessary
+     }
+   }, [isClient, user, loading, pathname, router]); // Dependencies for redirection
+
 
 
   // --- Render Logic ---
@@ -153,19 +149,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
      );
    }
 
-   // 3. Handle redirection state (show loader while redirecting)
-   // This condition ensures we show loading if the current user state doesn't match the route,
-   // preventing a flash of the wrong content before the useEffect redirect kicks in.
-   if ((user && pathname === '/auth') || (!user && pathname !== '/auth')) {
-       return (
-           <div className="flex items-center justify-center min-h-screen">
-               <Loader2 className="h-16 w-16 animate-spin text-primary" />
-           </div>
-       );
-   }
+   // Removed the explicit redirection loading state check here.
+   // The main `loading` state should cover the initial auth check period.
+   // The redirection useEffect will trigger navigation after `loading` becomes false.
 
-
-  // 4. Render children: If not loading, no authError, and user state matches current route requirements
+  // 4. Render children: If not loading, no authError.
+  // The redirection useEffect will handle navigation if necessary.
   return (
     <AuthContext.Provider value={{ user, loading, authError }}>
       {children}
