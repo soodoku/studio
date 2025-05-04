@@ -72,6 +72,9 @@ export function initializeAdminApp(): admin.app.App {
                 } catch (appDefaultError: any) {
                     initError = `Failed to load credentials from path AND applicationDefault. Path error: ${credError.message}, AppDefault error: ${appDefaultError.message}`;
                     console.error(`[Firebase Admin] Initialization failed: ${initError}`);
+                    // Log the actual underlying error for more details
+                    console.error("[Firebase Admin] Path Error Details:", credError);
+                    console.error("[Firebase Admin] AppDefault Error Details:", appDefaultError);
                     throw new Error(initError); // Critical failure
                 }
             }
@@ -83,8 +86,11 @@ export function initializeAdminApp(): admin.app.App {
                 credentialSource = 'applicationDefault (no path set)';
                 console.log(`[Firebase Admin] Successfully loaded credentials using ${credentialSource}.`);
             } catch (appDefaultError: any) {
-                initError = `Failed to load credentials using applicationDefault (GOOGLE_APPLICATION_CREDENTIALS not set). Error: ${appDefaultError.message}. Ensure service account is configured correctly in the execution environment (e.g., Cloud Workstation, Cloud Run, Compute Engine).`;
+                // Provide a more detailed error message here
+                initError = `Failed to load credentials using applicationDefault (GOOGLE_APPLICATION_CREDENTIALS not set). Ensure the server environment has access to credentials (e.g., through Application Default Credentials in GCP/Firebase Functions/Cloud Run, or a service account JSON). Error: ${appDefaultError.message}`;
                 console.error(`[Firebase Admin] Initialization failed: ${initError}`);
+                 // Log the actual underlying error for more details
+                 console.error("[Firebase Admin] AppDefault Error Details:", appDefaultError);
                 throw new Error(initError); // Critical failure
             }
         }
@@ -132,4 +138,5 @@ export function getAdminInitError(): string | null {
     // If `initializeAdminApp` throws, this might not be the most accurate state.
     return initError;
 }
-```
+
+    
