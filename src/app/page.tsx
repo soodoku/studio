@@ -72,6 +72,7 @@ function HomeContent() {
   // State for Browser TTS
   const [isSpeakingState, setIsSpeakingState] = useState(false);
   const [isPausedState, setIsPausedState] = useState(false);
+  const [currentSpeakingText, setCurrentSpeakingText] = useState<string | null>(null); // Track the text being spoken/paused
 
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
@@ -140,17 +141,18 @@ function HomeContent() {
          }
 
         // Basic check for duplicates based on name and user
-        if (books.some(book => book.name === metadata.fileName && book.userId === user.uid)) {
-            toast({
-            variant: "default",
-            title: "Duplicate File",
-            description: `${metadata.fileName} already exists in your library.`,
-            });
-            // Even if duplicate, allow refresh logic to run if metadata is different (e.g., new text extracted)
-            // But don't add a new Firestore document. Consider updating existing if needed.
-            // For now, just prevent adding a new doc.
-            return;
-        }
+        // No, allow duplicates for now as user might re-upload
+        // if (books.some(book => book.name === metadata.fileName && book.userId === user.uid)) {
+        //     toast({
+        //     variant: "default",
+        //     title: "Duplicate File",
+        //     description: `${metadata.fileName} already exists in your library.`,
+        //     });
+        //     // Even if duplicate, allow refresh logic to run if metadata is different (e.g., new text extracted)
+        //     // But don't add a new Firestore document. Consider updating existing if needed.
+        //     // For now, just prevent adding a new doc.
+        //     return;
+        // }
 
         try {
             const booksCollection = collection(db, 'books');
@@ -179,7 +181,7 @@ function HomeContent() {
             // Consider deleting the uploaded file from storage if DB entry fails?
             // await deleteFileFromStorage(metadata.storageUrl); // Requires implementation
         }
-    }, [user, books, toast]); // Removed setBooks from dependencies
+    }, [user, toast]); // Removed books from dependencies
 
 
     const deleteBook = async (bookToDelete: BookItem) => {
@@ -255,6 +257,7 @@ function HomeContent() {
         // Reset all reader-specific states
         setIsSpeakingState(false); // Reset these immediately
         setIsPausedState(false);
+        setCurrentSpeakingText(null);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
         setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null });
@@ -272,6 +275,7 @@ function HomeContent() {
         console.log("Re-selecting book to enter reader mode:", book.name);
         setIsSpeakingState(false); // Reset just in case
         setIsPausedState(false);
+        setCurrentSpeakingText(null);
         // Ensure other states are also reset if re-entering reader
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
@@ -393,6 +397,7 @@ function HomeContent() {
     setViewMode('library');
      setIsSpeakingState(false); // Reset these immediately
      setIsPausedState(false);
+     setCurrentSpeakingText(null);
      setSummaryState({ loading: false, data: null, error: null });
      setQuizState({ loading: false, data: null, error: null });
      setAudioState({ loading: false, error: null, audioUrl: null });
@@ -414,12 +419,11 @@ function HomeContent() {
       return;
     }
 
-    const currentActiveUtteranceText = getCurrentUtteranceText(); // Text of the utterance currently managed by TTS service
     const currentBookText = selectedBook.textContent;
 
     console.log("Play/Pause Clicked. isSpeaking:", isSpeakingState, "isPaused:", isPausedState);
     console.log("Current Book Text (start):", currentBookText?.substring(0, 50) + "...");
-    console.log("Current Utterance Text:", currentActiveUtteranceText?.substring(0, 50) + "...");
+    console.log("Current Speaking Text (start):", currentSpeakingText?.substring(0, 50) + "...");
 
 
     if (isSpeakingState) {
@@ -427,27 +431,38 @@ function HomeContent() {
       pauseSpeech();
       // State updates handled by onPause callback
     } else {
-      // If paused AND the utterance text matches the current book text, resume
-      if (isPausedState && currentActiveUtteranceText === currentBookText) {
+      // If paused AND the tracked speaking text matches the current book text, resume
+      if (isPausedState && currentSpeakingText === currentBookText) {
         console.log("Requesting resume.");
         resumeSpeech();
         // State updates handled by onResume callback
       } else {
         // Otherwise, start speaking the *current* selected book's text from the beginning
         console.log("Requesting play for book:", selectedBook.name);
+        setCurrentSpeakingText(currentBookText); // Track the text we are starting to speak
         speakText(
           currentBookText, // Use the currently selected book's text
           () => { // onEnd
             console.log("Playback finished naturally (onEnd callback).");
             setIsSpeakingState(false);
             setIsPausedState(false);
-            // No need to clear currentText here, tts service handles it
+            setCurrentSpeakingText(null); // Clear tracked text on natural end
           },
           (error) => { // onError
             console.error("Speech error (onError callback):", error);
-            toast({ variant: "destructive", title: "Speech Error", description: `Could not play audio. Error: ${error.error || 'Unknown'}` });
+            // Ignore "interrupted" error, as it's expected when stopping/starting new speech
+            if (error.error !== 'interrupted') {
+                toast({ variant: "destructive", title: "Speech Error", description: `Could not play audio. Error: ${error.error || 'Unknown'}` });
+            } else {
+                console.log("[TTS] Ignoring 'interrupted' error in UI.");
+            }
+            // Reset state regardless of error type, consistent with tts service logic
             setIsSpeakingState(false);
             setIsPausedState(false);
+             // Clear tracked text only if the error corresponds to the text we were tracking
+             if (currentSpeakingText === currentBookText) {
+                setCurrentSpeakingText(null);
+            }
           },
           () => { // onStart
             console.log('Playback started (onStart callback).');
@@ -478,11 +493,12 @@ function HomeContent() {
    const handleStop = () => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
           console.log("Stop button clicked. Requesting stop.");
-          stopSpeech(); // This should trigger onend eventually
+          stopSpeech(); // This should trigger onend or onerror('interrupted')
           // Immediately update UI state for responsiveness
           setIsSpeakingState(false);
           setIsPausedState(false);
-          // Note: The onEnd callback in speakText handles the final state reset
+          // Don't clear currentSpeakingText immediately, let the onEnd/onError handler do it
+          // based on whether the stopped utterance matches the tracked one.
       }
   };
 
@@ -821,15 +837,26 @@ const handleGenerateAudio = async () => {
       {/* Main Content Area */}
       <SidebarInset className="flex flex-col">
          {mounted && isMobile && (
-             <header className="flex h-14 items-center gap-4 border-b bg-card px-4 sticky top-0 z-10">
-                {viewMode === 'reader' ? (
-                     <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library"><ArrowLeft className="h-5 w-5" /></Button>
-                 ) : ( mounted && <SidebarTrigger /> )}
-                <div className="flex items-center gap-2 flex-grow justify-center">
-                   <AudioLines className="h-6 w-6 text-primary" />
-                   <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
-                </div>
-                  <div className="w-8">{!user && !authLoading && (<Button variant="ghost" size="icon" onClick={() => router.push('/auth')} title="Login"><LogIn className="h-5 w-5" /></Button>)}</div>
+             <header className="flex h-14 items-center gap-2 border-b bg-card px-4 sticky top-0 z-10">
+                 {/* Always show SidebarTrigger on mobile */}
+                 <SidebarTrigger />
+                 {/* Conditionally show Back button *next* to trigger */}
+                 {viewMode === 'reader' && (
+                     <Button variant="ghost" size="icon" onClick={handleGoBackToLibrary} aria-label="Back to Library" className="ml-1">
+                         <ArrowLeft className="h-5 w-5" />
+                     </Button>
+                 )}
+                 <div className="flex items-center gap-2 flex-grow justify-center">
+                     <AudioLines className="h-6 w-6 text-primary" />
+                     <h1 className="text-xl font-semibold text-foreground">AudioBook Buddy</h1>
+                 </div>
+                 <div className="w-8">
+                     {!user && !authLoading && (
+                         <Button variant="ghost" size="icon" onClick={() => router.push('/auth')} title="Login">
+                             <LogIn className="h-5 w-5" />
+                         </Button>
+                     )}
+                 </div>
              </header>
          )}
         <main className="flex flex-1 flex-col items-stretch p-4 md:p-6 overflow-hidden">
@@ -893,14 +920,14 @@ const handleGenerateAudio = async () => {
                           <AccordionTrigger><div className="flex items-center gap-2 w-full"><Headphones className="h-5 w-5 flex-shrink-0" /><span className="flex-grow text-left">Listen (Browser TTS)</span></div></AccordionTrigger>
                           <AccordionContent>
                               <div className="flex items-center justify-center gap-4 py-4">
-                                  <Button onClick={handlePlayPause} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error} aria-label={isSpeakingState ? "Pause" : "Play"}>
+                                  <Button onClick={handlePlayPause} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading || !!textExtractionState.error} aria-label={isSpeakingState ? "Pause" : "Play"}>
                                       {isSpeakingState ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                                   </Button>
                                   <Button onClick={handleStop} size="icon" variant="outline" disabled={!isSpeakingState && !isPausedState} aria-label="Stop"><Square className="h-5 w-5" /></Button>
                                   {/* Add Speed Controls if desired */}
                                   {/* <select onChange={handleSpeedChange} defaultValue="1">...</select> */}
                               </div>
-                               {(!selectedBook?.textContent || textExtractionState.error) && !textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Load text content first.</p>}
+                               {(!selectedBook?.textContent || !!textExtractionState.error) && !textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Load text content first.</p>}
                                {textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Loading text...</p>}
                                { typeof window !== 'undefined' && !window.speechSynthesis && (<p className="text-sm text-destructive text-center mt-2">TTS not supported.</p>)}
                           </AccordionContent>
@@ -1019,4 +1046,4 @@ export default function Home() {
   );
 }
 
-    
+
