@@ -454,14 +454,14 @@ function HomeContent() {
           (errorEvent) => { // onError
             console.error("Speech error (onError callback):", errorEvent);
             // Ignore "interrupted" error, as it's expected when stopping/starting new speech
-            if (errorEvent.error !== 'interrupted') {
+            if (errorEvent.error !== 'interrupted' && errorEvent.error !== 'canceled') {
                 toast({
                     variant: "destructive",
                     title: "Speech Error",
                     description: `Could not play audio. Error: ${errorEvent.error || 'Unknown'}. Check console for details.`
                 });
             } else {
-                console.log("[TTS] Ignoring 'interrupted' error in UI.");
+                console.log(`[TTS] Ignoring '${errorEvent.error}' error in UI.`);
             }
             // Reset state regardless of error type, consistent with tts service logic
             setIsSpeakingState(false);
@@ -500,7 +500,7 @@ function HomeContent() {
    const handleStop = () => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
           console.log("Stop button clicked. Requesting stop.");
-          stopSpeech(); // This should trigger onend or onerror('interrupted')
+          stopSpeech(); // This should trigger onend or onerror('interrupted'/'canceled')
           // Immediately update UI state for responsiveness
           setIsSpeakingState(false);
           setIsPausedState(false);
@@ -605,83 +605,104 @@ function HomeContent() {
   };
 
  // --- Audio Generation Handler ---
-const handleGenerateAudio = async () => {
+ const handleGenerateAudio = async () => {
      if (!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error) {
-        toast({ variant: "default", title: "No Text Available", description: "Load or finish loading text content before generating audio file." });
-        return;
-    }
-    if (!selectedBook.id || !user || !db || !storage) {
-        toast({ variant: "destructive", title: "Error", description: "Required services unavailable for audio generation." });
-        return;
-    }
+         toast({ variant: "default", title: "No Text Available", description: "Load or finish loading text content before generating audio file." });
+         return;
+     }
+     if (!selectedBook.id || !user || !db || !storage || !auth) {
+         toast({ variant: "destructive", title: "Error", description: "Required services unavailable for audio generation." });
+         return;
+     }
 
+     setAudioState({ loading: true, error: null, audioUrl: null });
+     toast({ title: "Starting Audio Generation", description: "Sending text to server..." });
 
-    setAudioState({ loading: true, error: null, audioUrl: null });
-    toast({ title: "Starting Audio Generation", description: "Preparing audio file..." });
+     try {
+         // Get the Firebase Auth ID token for the current user
+         const idToken = await user.getIdToken();
 
-    try {
-        // Placeholder for actual server-side audio file generation
-        // This should ideally be a Cloud Function or a dedicated backend service
-        // that takes the text, uses a server-side TTS (like Google Cloud TTS),
-        // uploads the result to storage, and returns the URL.
-        console.log(`Simulating server-side audio generation for book ID: ${selectedBook.id}`);
-        await new Promise(resolve => setTimeout(resolve, 4000)); // Simulate generation time
+         console.log(`[Client] Sending audio generation request for bookId: ${selectedBook.id}, text length: ${selectedBook.textContent.length}`);
 
-        // Assume server generates and uploads to a path like: audiobooks_generated/{userId}/{bookId}.mp3
-        // IMPORTANT: Ensure storage rules allow writing to this path by authenticated users.
-        const generatedAudioFileName = `${selectedBook.id}_audio.mp3`;
-        const audioStoragePath = `audiobooks_generated/${user.uid}/${generatedAudioFileName}`;
+         // Call the new API route
+         const response = await fetch('/api/generate-audio', {
+             method: 'POST',
+             headers: {
+                 'Content-Type': 'application/json',
+                 'Authorization': `Bearer ${idToken}`, // Include the auth token
+             },
+             body: JSON.stringify({
+                 text: selectedBook.textContent,
+                 bookId: selectedBook.id,
+             }),
+         });
 
-        // Simulate getting a download URL (server would return this after upload)
-        // For simulation, we create a plausible storage URL structure.
-        const simulatedAudioUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}/o/${encodeURIComponent(audioStoragePath)}?alt=media`;
-        console.log(`Simulated audio URL: ${simulatedAudioUrl}`);
+         console.log(`[Client] API response status: ${response.status}`);
 
-        // Update Firestore with the new audio storage URL
-        const bookRef = doc(db, "books", selectedBook.id);
-        // Client-side ownership check (redundant if rules are correct, but good practice)
-        if (selectedBook.userId !== user.uid) {
-            throw new Error("Permission denied: You do not own this book.");
-        }
+         if (!response.ok) {
+              let errorData = { error: 'Unknown error from server' };
+              try {
+                   errorData = await response.json();
+              } catch (parseError) {
+                   console.error("[Client] Failed to parse error response JSON:", parseError);
+              }
+             console.error(`[Client] API Error Response:`, errorData);
+             throw new Error(`Server responded with ${response.status}: ${errorData.error || 'Failed to generate audio'}`);
+         }
 
-        try {
-            await updateDoc(bookRef, { audioStorageUrl: simulatedAudioUrl });
-            console.log(`[Firestore] Updated audioStorageUrl for book ${selectedBook.id}`);
+         const data = await response.json();
+         const generatedAudioUrl = data.audioUrl;
 
-            // Update local state immediately for responsiveness
-            setSelectedBook(prev => {
-                if (prev && prev.id === selectedBook.id) {
-                    return { ...prev, audioStorageUrl: simulatedAudioUrl };
-                }
-                return prev; // Don't update if selection changed
-            });
+         if (!generatedAudioUrl) {
+              console.error("[Client] API response missing audioUrl:", data);
+             throw new Error("Server did not return a valid audio URL.");
+         }
 
-            // Update the audio generation state with the new URL
-            setAudioState({ loading: false, error: null, audioUrl: simulatedAudioUrl });
-            toast({
-                title: "Audio Generated (Simulation)",
-                description: `Audio file reference saved.`,
-            });
+         console.log(`[Client] Received audio URL: ${generatedAudioUrl}`);
 
-        } catch (updateError) {
-            console.error("Firestore update failed for audio URL:", updateError);
-             if (updateError instanceof Error && updateError.message.includes('permission-denied')) {
-                  throw new Error("Permission denied: Failed to update book data. Check Firestore rules.");
-             }
-            throw new Error("Failed to save audio file reference to the database.");
-        }
+         // Update Firestore with the new audio storage URL
+         const bookRef = doc(db, "books", selectedBook.id);
+         // Client-side ownership check (redundant if rules are correct, but good practice)
+         if (selectedBook.userId !== user.uid) {
+             throw new Error("Permission denied: You do not own this book.");
+         }
 
-    } catch (error) {
-        console.error("Error generating audio (client-side simulation):", error);
-        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during audio generation simulation.";
-        setAudioState({ loading: false, error: errorMessage, audioUrl: null });
-        toast({
-            variant: "destructive",
-            title: "Audio Generation Failed",
-            description: errorMessage,
-        });
-    }
-};
+         try {
+             await updateDoc(bookRef, { audioStorageUrl: generatedAudioUrl });
+             console.log(`[Firestore] Updated audioStorageUrl for book ${selectedBook.id}`);
+
+             // Update local state immediately for responsiveness
+             setSelectedBook(prev => {
+                 if (prev && prev.id === selectedBook.id) {
+                     return { ...prev, audioStorageUrl: generatedAudioUrl };
+                 }
+                 return prev; // Don't update if selection changed
+             });
+             setAudioState({ loading: false, error: null, audioUrl: generatedAudioUrl });
+             toast({
+                 title: "Audio Generated",
+                 description: `Audio file created and saved.`,
+             });
+
+         } catch (updateError) {
+             console.error("Firestore update failed for audio URL:", updateError);
+              if (updateError instanceof Error && updateError.message.includes('permission-denied')) {
+                   throw new Error("Permission denied: Failed to update book data. Check Firestore rules.");
+              }
+             throw new Error("Failed to save audio file reference to the database.");
+         }
+
+     } catch (error) {
+         console.error("Error generating audio (client-side):", error);
+         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during audio generation.";
+         setAudioState({ loading: false, error: errorMessage, audioUrl: null });
+         toast({
+             variant: "destructive",
+             title: "Audio Generation Failed",
+             description: errorMessage,
+         });
+     }
+ };
 
 
   // --- Quiz Interaction Handlers ---
@@ -966,11 +987,11 @@ const handleGenerateAudio = async () => {
                                 </div>
                            )}
                            {!audioState.loading && (
-                             <Button onClick={handleGenerateAudio} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || audioState.loading || textExtractionState.loading || !!textExtractionState.error}>
+                             <Button onClick={handleGenerateAudio} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || audioState.loading || textExtractionState.loading || !!textExtractionState.error || !user}>
                                {audioState.loading ? 'Generating...' : ((audioState.audioUrl || selectedBook?.audioStorageUrl) ? 'Regenerate Audio File' : 'Generate Audio File')}
                              </Button>
                            )}
-                            <p className="text-xs text-muted-foreground mt-2 text-center">Note: Generates an audio file via server (simulation). Requires loaded text content.</p>
+                            <p className="text-xs text-muted-foreground mt-2 text-center">Note: Generates an audio file using server-side TTS. Requires loaded text content.</p>
                         </AccordionContent>
                       </AccordionItem>
 
@@ -980,7 +1001,7 @@ const handleGenerateAudio = async () => {
                         <AccordionContent>
                           {summaryState.error && <p className="text-sm text-destructive">{summaryState.error}</p>}
                           {summaryState.data && <p className="text-sm">{summaryState.data.summary}</p>}
-                          <Button onClick={handleSummarize} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || summaryState.loading || textExtractionState.loading || !!textExtractionState.error}>
+                          <Button onClick={handleSummarize} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || summaryState.loading || textExtractionState.loading || !!textExtractionState.error || !user}>
                             {summaryState.loading ? 'Generating...' : (summaryState.data ? 'Regenerate' : 'Generate Summary')}
                           </Button>
                            {summaryState.error && summaryState.error.includes('AI service not initialized') && (<p className="text-xs text-destructive mt-2 text-center">{summaryState.error}</p>)}
@@ -1020,14 +1041,14 @@ const handleGenerateAudio = async () => {
                                 </div>
                               ))}
                                {!quizSubmitted && (<Button onClick={handleQuizSubmit} size="sm" className="w-full mt-4" disabled={quizState.loading || Object.keys(userAnswers).length !== quizState.data.questions.length}>Submit Quiz</Button>)}
-                                 <Button onClick={handleGenerateQuiz} size="sm" variant={quizSubmitted || quizState.data ? "outline" : "default"} className="w-full mt-2" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error}>
+                                 <Button onClick={handleGenerateQuiz} size="sm" variant={quizSubmitted || quizState.data ? "outline" : "default"} className="w-full mt-2" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error || !user}>
                                    {quizState.loading ? 'Generating...' : 'Generate New Quiz'}
                                  </Button>
                             </div>
                           )}
                            {quizState.data && quizState.data.questions.length === 0 && !quizState.loading &&(<p className="text-sm text-muted-foreground">No quiz questions generated.</p>)}
                           {!quizState.data && !quizState.error && (
-                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error}>
+                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error || !user}>
                                {quizState.loading ? 'Generating...' : 'Generate Quiz'}
                              </Button>
                           )}
@@ -1055,10 +1076,3 @@ export default function Home() {
       </SidebarProvider>
   );
 }
-
-
-
-
-
-
-    
