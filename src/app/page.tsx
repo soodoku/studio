@@ -76,7 +76,8 @@ function HomeContent() {
 
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
-  const [audioState, setAudioState] = useState<AudioGenerationState>({ loading: false, error: null, audioUrl: null });
+  // Initialize audioState with the audioUrl from the selected book if available
+  const [audioState, setAudioState] = useState<AudioGenerationState>({ loading: false, error: null, audioUrl: selectedBook?.audioStorageUrl || null });
   const [textExtractionState, setTextExtractionState] = useState<TextExtractionState>({ loading: false, error: null });
   const [viewMode, setViewMode] = useState<'library' | 'reader'>('library');
   const [userAnswers, setUserAnswers] = useState<UserAnswers>({});
@@ -106,6 +107,8 @@ function HomeContent() {
           ...doc.data(),
           // textContent might not be stored, ensure it defaults safely
           textContent: doc.data().textContent || undefined,
+          // Make sure audioStorageUrl is included
+          audioStorageUrl: doc.data().audioStorageUrl || undefined,
           createdAt: doc.data().createdAt || serverTimestamp(), // Ensure createdAt exists
         })) as BookItem[];
         setBooks(userBooks);
@@ -140,20 +143,6 @@ function HomeContent() {
             return;
          }
 
-        // Basic check for duplicates based on name and user
-        // No, allow duplicates for now as user might re-upload
-        // if (books.some(book => book.name === metadata.fileName && book.userId === user.uid)) {
-        //     toast({
-        //     variant: "default",
-        //     title: "Duplicate File",
-        //     description: `${metadata.fileName} already exists in your library.`,
-        //     });
-        //     // Even if duplicate, allow refresh logic to run if metadata is different (e.g., new text extracted)
-        //     // But don't add a new Firestore document. Consider updating existing if needed.
-        //     // For now, just prevent adding a new doc.
-        //     return;
-        // }
-
         try {
             const booksCollection = collection(db, 'books');
             // Prepare data for Firestore, using metadata from storage upload
@@ -165,7 +154,7 @@ function HomeContent() {
                 storageUrl: metadata.storageUrl,
                 textContent: metadata.textContent || null, // Store extracted text if available, otherwise null
                 createdAt: serverTimestamp(), // Use Firestore server timestamp
-                audioStorageUrl: null, // Initialize audio URL field
+                audioStorageUrl: null, // Initialize audio URL field explicitly
             };
             const docRef = await addDoc(booksCollection, newBookData);
             console.log("Book added to Firestore with ID: ", docRef.id);
@@ -181,7 +170,7 @@ function HomeContent() {
             // Consider deleting the uploaded file from storage if DB entry fails?
             // await deleteFileFromStorage(metadata.storageUrl); // Requires implementation
         }
-    }, [user, toast]); // Removed books from dependencies
+    }, [user, toast]);
 
 
     const deleteBook = async (bookToDelete: BookItem) => {
@@ -195,26 +184,32 @@ function HomeContent() {
              handleGoBackToLibrary();
         }
 
+        console.log(`Attempting to delete book: ${bookToDelete.name} (ID: ${bookToDelete.id})`);
+        console.log(`Main file URL: ${bookToDelete.storageUrl}`);
+        console.log(`Audio file URL: ${bookToDelete.audioStorageUrl}`);
+
         try {
             // 1. Delete Firestore document
             // Security rule `request.auth.uid == resource.data.userId` should handle authorization
             await deleteDoc(doc(db, "books", bookToDelete.id));
             toast({
-                title: "Book Deleted",
-                description: `"${bookToDelete.name}" removed from your library metadata.`,
+                title: "Book Metadata Deleted",
+                description: `"${bookToDelete.name}" metadata removed.`,
             });
 
              // 2. Delete the main file from Firebase Storage
              try {
                  const fileRef = ref(storage, bookToDelete.storageUrl); // Use the storage URL
                  await deleteObject(fileRef);
-                 console.log(`[Storage] Deleted file: ${bookToDelete.storageUrl}`);
-                 toast({ title: "File Deleted", description: `Main file for "${bookToDelete.name}" deleted from storage.` });
+                 console.log(`[Storage] Successfully deleted main file: ${bookToDelete.storageUrl}`);
+                 toast({ title: "Main File Deleted", description: `Main file for "${bookToDelete.name}" deleted.` });
              } catch (storageError: any) {
                  console.error(`[Storage] Error deleting main file ${bookToDelete.storageUrl}:`, storageError);
                   // If file not found, it might have been deleted already or URL was wrong
                  if (storageError.code !== 'storage/object-not-found') {
-                      toast({ variant: "destructive", title: "Storage Deletion Failed", description: `Could not delete the main file for "${bookToDelete.name}". It might need manual cleanup.` });
+                      toast({ variant: "destructive", title: "Storage Deletion Failed", description: `Could not delete the main file for "${bookToDelete.name}". Manual cleanup may be needed.` });
+                 } else {
+                     console.warn(`[Storage] Main file not found (may have been deleted already): ${bookToDelete.storageUrl}`);
                  }
              }
 
@@ -223,12 +218,14 @@ function HomeContent() {
                  try {
                      const audioRef = ref(storage, bookToDelete.audioStorageUrl);
                      await deleteObject(audioRef);
-                     console.log(`[Storage] Deleted audio file: ${bookToDelete.audioStorageUrl}`);
-                     toast({ title: "Audio File Deleted", description: `Audio file for "${bookToDelete.name}" deleted from storage.` });
+                     console.log(`[Storage] Successfully deleted audio file: ${bookToDelete.audioStorageUrl}`);
+                     toast({ title: "Audio File Deleted", description: `Audio file for "${bookToDelete.name}" deleted.` });
                  } catch (audioStorageError: any) {
                      console.error(`[Storage] Error deleting audio file ${bookToDelete.audioStorageUrl}:`, audioStorageError);
                      if (audioStorageError.code !== 'storage/object-not-found') {
                           toast({ variant: "destructive", title: "Audio Deletion Failed", description: `Could not delete the audio file for "${bookToDelete.name}".` });
+                     } else {
+                          console.warn(`[Storage] Audio file not found (may have been deleted already): ${bookToDelete.audioStorageUrl}`);
                      }
                  }
             }
@@ -260,6 +257,7 @@ function HomeContent() {
         setCurrentSpeakingText(null);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
+        // Set audio state based on the newly selected book's audio URL
         setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null });
         setTextExtractionState({ loading: false, error: null });
         setUserAnswers({});
@@ -268,7 +266,7 @@ function HomeContent() {
 
         // Set the new book (textContent might be loaded later)
         setSelectedBook(book);
-        console.log("Selected new book:", book.name, "ID:", book.id);
+        console.log("Selected new book:", book.name, "ID:", book.id, "Audio URL:", book.audioStorageUrl);
     } else if (viewMode !== 'reader') {
         // If same book is clicked again but we are in library view, switch to reader
         // No need to stop speech as it shouldn't be playing in library view
@@ -279,6 +277,7 @@ function HomeContent() {
         // Ensure other states are also reset if re-entering reader
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
+        // Set audio state based on the re-selected book's audio URL
         setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null });
         setTextExtractionState({ loading: false, error: null });
         setUserAnswers({});
@@ -376,13 +375,17 @@ function HomeContent() {
         }
          else if (viewMode === 'reader' && selectedBook && selectedBook.textContent) {
              console.log("Effect triggered: Text content already available for", selectedBook.name);
+             // Also ensure audio state is synced if text is already loaded
+             if (audioState.audioUrl !== selectedBook.audioStorageUrl) {
+                 setAudioState(prev => ({ ...prev, audioUrl: selectedBook.audioStorageUrl || null }));
+             }
          }
          else if (viewMode === 'reader' && !selectedBook) {
              console.log("Effect triggered: In reader mode but no book selected.");
          } else if (viewMode === 'library') {
               console.log("Effect triggered: In library mode.");
          }
-    }, [viewMode, selectedBook, textExtractionState.loading, loadTextContent]);
+    }, [viewMode, selectedBook, textExtractionState.loading, loadTextContent, audioState.audioUrl]);
 
 
   const handleGoBackToLibrary = () => {
@@ -653,6 +656,7 @@ const handleGenerateAudio = async () => {
                 return prev; // Don't update if selection changed
             });
 
+            // Update the audio generation state with the new URL
             setAudioState({ loading: false, error: null, audioUrl: simulatedAudioUrl });
             toast({
                 title: "Audio Generated (Simulation)",
@@ -781,7 +785,7 @@ const handleGenerateAudio = async () => {
                                   >
                                     <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
                                     {/* Make sure span is visible in expanded mode */}
-                                    <span className="truncate flex-grow ml-1">{book.name}</span>
+                                    <span className="truncate flex-grow ml-1 group-data-[collapsible=icon]:hidden">{book.name}</span>
                                     {book.audioStorageUrl && ( // Check for generated audio URL
                                          <Headphones className="h-3 w-3 ml-auto text-muted-foreground flex-shrink-0 group-data-[collapsible=icon]:hidden" title="Generated audio available"/>
                                     )}
@@ -949,20 +953,21 @@ const handleGenerateAudio = async () => {
                         </AccordionTrigger>
                         <AccordionContent>
                            {audioState.error && <p className="text-sm text-destructive break-words">{audioState.error}</p>}
-                           {selectedBook.audioStorageUrl && !audioState.loading && ( // Check for generated URL
+                           {/* Check audioState.audioUrl or selectedBook.audioStorageUrl */}
+                           {(audioState.audioUrl || selectedBook?.audioStorageUrl) && !audioState.loading && (
                                 <div className="text-sm text-center py-2 space-y-2">
                                     <p>Audio file generated.</p>
                                      {/* Provide a link or embedded player */}
-                                     <audio controls src={selectedBook.audioStorageUrl} className="w-full mt-2">
+                                     <audio controls src={audioState.audioUrl || selectedBook?.audioStorageUrl || ''} className="w-full mt-2">
                                          Your browser does not support the audio element.
-                                         <a href={selectedBook.audioStorageUrl} target="_blank" rel="noopener noreferrer">Download Audio</a>
+                                         <a href={audioState.audioUrl || selectedBook?.audioStorageUrl || ''} target="_blank" rel="noopener noreferrer">Download Audio</a>
                                      </audio>
                                     <p className="text-xs text-muted-foreground mt-1">(File stored in Firebase Storage)</p>
                                 </div>
                            )}
                            {!audioState.loading && (
                              <Button onClick={handleGenerateAudio} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || audioState.loading || textExtractionState.loading || !!textExtractionState.error}>
-                               {audioState.loading ? 'Generating...' : (selectedBook.audioStorageUrl ? 'Regenerate Audio File' : 'Generate Audio File')}
+                               {audioState.loading ? 'Generating...' : ((audioState.audioUrl || selectedBook?.audioStorageUrl) ? 'Regenerate Audio File' : 'Generate Audio File')}
                              </Button>
                            )}
                             <p className="text-xs text-muted-foreground mt-2 text-center">Note: Generates an audio file via server (simulation). Requires loaded text content.</p>
@@ -1054,3 +1059,6 @@ export default function Home() {
 
 
 
+
+
+    
