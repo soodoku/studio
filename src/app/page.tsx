@@ -780,7 +780,8 @@ const handleGenerateAudio = async () => {
                                     title={book.name}
                                   >
                                     <Book className="h-4 w-4 mr-2 flex-shrink-0 group-data-[collapsible=icon]:mr-0" />
-                                    <span className="truncate flex-grow ml-1 group-data-[collapsible=icon]:hidden">{book.name}</span>
+                                    {/* Make sure span is visible in expanded mode */}
+                                    <span className="truncate flex-grow ml-1">{book.name}</span>
                                     {book.audioStorageUrl && ( // Check for generated audio URL
                                          <Headphones className="h-3 w-3 ml-auto text-muted-foreground flex-shrink-0 group-data-[collapsible=icon]:hidden" title="Generated audio available"/>
                                     )}
@@ -1049,6 +1050,7 @@ export default function Home() {
       </SidebarProvider>
   );
 }
+
 
 
 
