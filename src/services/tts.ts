@@ -53,7 +53,7 @@ export function speakText(
 ): void {
   if (typeof window === 'undefined' || !window.speechSynthesis) {
     console.error('Speech Synthesis API is not supported in this browser.');
-    onError?.(new SpeechSynthesisErrorEvent('error', { error: 'Browser not supported' }));
+    onError?.(new SpeechSynthesisErrorEvent('error', { error: 'Browser not supported' } as SpeechSynthesisErrorEventInit)); // Provide required properties for event init
     return;
   }
 
@@ -157,24 +157,21 @@ export function speakText(
   };
 
   utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
-    // Log the full event object for better debugging
-    console.error('[TTS] Speech Synthesis Error Event:', event);
-    // Log the specific error property if available
-    if (event.error) {
-        console.error('[TTS] Specific Error Code:', event.error);
-    }
+    // Log the error event itself for context, but maybe not as a console.error
+    console.log('[TTS] Speech Synthesis Event:', event.type, event); // Use console.log or debug
+
+    const errorType = event.error || 'unknown'; // Get the error code/string
     const erroredUtterance = utterance; // Capture utterance before nulling
 
-    // Check if the error is the expected "interrupted" error caused by cancel()
-    // Different browsers might use different codes or messages.
-    const isInterrupted = event.error === 'interrupted' || event.error === 'canceled';
+    // Check if the error is the expected "interrupted" or "canceled" error caused by synth.cancel()
+    const isInterrupted = errorType === 'interrupted' || errorType === 'canceled';
 
     if (isInterrupted) {
-        console.log('[TTS] Speech interrupted (likely due to cancel()), skipping external error callback.');
+        console.log(`[TTS] Speech interruption detected (error code: '${errorType}'), likely due to cancel(). Skipping external error callback.`);
         // State reset will happen in onend which follows cancel()
     } else {
         // Handle unexpected errors
-        console.error('[TTS] Unexpected speech error occurred.');
+        console.error(`[TTS] Unexpected speech error occurred: ${errorType}`);
         // Call external error callback ONLY for genuine errors
         onErrorCallback?.(event);
     }
@@ -189,7 +186,7 @@ export function speakText(
     // Clear currentText only if the errored utterance matches the stored text
     if (erroredUtterance && currentText === erroredUtterance.text) {
         currentText = '';
-        console.log("[TTS] Cleared currentText due to error/interruption.");
+        console.log(`[TTS] Cleared currentText due to error/interruption (error code: '${errorType}').`);
     }
   };
 
@@ -267,4 +264,3 @@ export function stopSpeech(premature = false): void {
      wasCancelledPrematurely = false; // Ensure flag is reset if synth unavailable
   }
 }
-
