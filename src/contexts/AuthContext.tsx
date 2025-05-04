@@ -28,7 +28,6 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  // Initialize loading based on initial config validity assumption
   const [loading, setLoading] = useState(true); // Start true, wait for auth check
   const [authError, setAuthError] = useState<string | null>(initError); // Use initError captured during Firebase setup
   const router = useRouter(); // Initialize router
@@ -117,28 +116,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
    // 3. Auth Check and Redirect Logic (Client-side only after loading and no error)
    // This handles redirecting *away* from /auth if logged in,
    // and redirecting *to* /auth if not logged in and not already there.
+   // Use useEffect for client-side navigation to avoid SSR issues
+   useEffect(() => {
+     if (typeof window !== 'undefined') {
+         if (user && pathname === '/auth') {
+             // Logged in, but on auth page -> redirect to home
+             console.log("AuthProvider Effect: User logged in, redirecting from /auth to /");
+             router.push('/');
+         } else if (!user && pathname !== '/auth') {
+             // Not logged in, and not on auth page -> redirect to auth
+             console.log("AuthProvider Effect: User not logged in, redirecting to /auth");
+             router.push('/auth');
+         }
+     }
+   }, [user, pathname, router, loading, authError]); // Re-run effect when user state, pathname, or loading/error status changes
+
+
+   // Intermediate check: While redirecting, show loading to prevent brief flash of wrong content
    if (typeof window !== 'undefined') {
-        if (user && pathname === '/auth') {
-            // Logged in, but on auth page -> redirect to home
-            console.log("AuthProvider: User logged in, redirecting from /auth to /");
-            router.push('/');
-            // Return loading state while redirecting
-            return (
-                <div className="flex items-center justify-center min-h-screen">
-                    <Loader2 className="h-16 w-16 animate-spin text-primary" />
-                </div>
-            );
-        } else if (!user && pathname !== '/auth') {
-            // Not logged in, and not on auth page -> redirect to auth
-            console.log("AuthProvider: User not logged in, redirecting to /auth");
-            router.push('/auth');
-            // Return loading state while redirecting
-            return (
-                <div className="flex items-center justify-center min-h-screen">
-                    <Loader2 className="h-16 w-16 animate-spin text-primary" />
-                </div>
-            );
-        }
+      if ((user && pathname === '/auth') || (!user && pathname !== '/auth')) {
+          return (
+              <div className="flex items-center justify-center min-h-screen">
+                  <Loader2 className="h-16 w-16 animate-spin text-primary" />
+              </div>
+          );
+      }
    }
 
 
@@ -159,4 +161,3 @@ export const useAuth = () => {
   }
   return context;
 };
-```
