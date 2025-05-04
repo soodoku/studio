@@ -8,7 +8,7 @@ import { auth, firebaseConfigValid, initError } from '@/lib/firebase/clientApp';
 import { Loader2 } from 'lucide-react'; // For loading state
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // For error display
 import { Terminal } from 'lucide-react'; // Icon for alert
-import { useRouter } from 'next/navigation'; // Import for redirection
+import { useRouter, usePathname } from 'next/navigation'; // Import usePathname
 
 interface AuthContextType {
   user: User | null;
@@ -28,59 +28,65 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  // Initialize loading to true only if config is potentially valid
-  const [loading, setLoading] = useState(firebaseConfigValid);
-  // Initialize authError state with the error potentially captured during clientApp initialization
-  const [authError, setAuthError] = useState<string | null>(initError);
+  // Initialize loading based on initial config validity assumption
+  const [loading, setLoading] = useState(true); // Start true, wait for auth check
+  const [authError, setAuthError] = useState<string | null>(initError); // Use initError captured during Firebase setup
   const router = useRouter(); // Initialize router
+  const pathname = usePathname(); // Get current path
 
   useEffect(() => {
     // This effect runs only on the client side after mount.
 
-    // If Firebase config was invalid from the start (checked in clientApp.ts),
-    // set loading to false and ensure the error is set. No need to proceed.
+    // 1. Check if Firebase config was fundamentally invalid from the start
     if (!firebaseConfigValid) {
+        setAuthError(prev => prev || "Firebase configuration is invalid (check .env.local)."); // Keep existing initError if present
         setLoading(false);
-        // The error message is already set in the initial state via initError
-        console.warn("AuthContext: Firebase configuration invalid, cannot listen for auth changes.");
+        console.warn("AuthProvider: Firebase config invalid, skipping auth listener.");
         return; // Don't setup listener
     }
 
-    // At this point, config seemed valid initially. Now check if 'auth' instance is available.
-    // It might be null if initialization failed *after* the initial config check.
+    // 2. Check if auth instance is missing (runtime init failure after config check)
     if (!auth) {
-        // If auth is null even though config *seemed* valid, set an error.
-        setAuthError(prevError => prevError || "Authentication service failed to initialize unexpectedly.");
+        setAuthError(prev => prev || "Authentication service failed to initialize unexpectedly.");
         setLoading(false);
         setUser(null);
-        console.error("AuthContext: Firebase Auth instance is unexpectedly null.");
+        console.error("AuthProvider: Firebase Auth instance is null despite seemingly valid config.");
         return; // Don't setup listener
     }
 
-    // If config was valid AND auth instance exists, setup the listener.
+    // 3. Config valid, auth instance exists, setup the listener.
+    console.log("AuthProvider: Setting up onAuthStateChanged listener.");
     setLoading(true); // Ensure loading is true while waiting for the first auth state
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false); // Auth state resolved, stop loading
-      setAuthError(null); // Clear any previous errors on successful state change
-      console.log("Auth State Changed:", currentUser ? `User: ${currentUser.uid}` : "No User");
-    }, (error) => {
+
+    const unsubscribe = onAuthStateChanged(auth,
+      (currentUser) => {
+        setUser(currentUser);
+        setLoading(false); // Auth state resolved
+        setAuthError(null); // Clear errors on successful state change
+        console.log("AuthProvider: Auth state changed.", currentUser ? `User: ${currentUser.uid}` : "No user");
+      },
+      (error) => {
         // Handle errors during the subscription itself
-        console.error("Auth state listener error:", error);
-        setAuthError(`Error listening for authentication changes: ${error.message}`);
+        console.error("AuthProvider: Auth state listener error:", error);
+        setAuthError(`Auth listener error: ${error.message}`);
         setUser(null);
         setLoading(false);
-    });
+      }
+    );
 
     // Cleanup subscription on unmount
-    return () => unsubscribe();
+    return () => {
+      console.log("AuthProvider: Cleaning up onAuthStateChanged listener.");
+      unsubscribe();
+    };
 
     // Run effect only once on mount
-  }, []);
+  }, []); // Empty dependency array ensures this runs once
 
   // --- Render Logic ---
 
   // 1. Show loading indicator while loading state is true.
+  // This covers initial load AND waiting for the first auth state check.
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
@@ -98,9 +104,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
            <Terminal className="h-4 w-4" />
            <AlertTitle>Authentication Unavailable</AlertTitle>
            <AlertDescription>
-             Could not initialize the authentication service. Please ensure your Firebase configuration in{' '}
-             {/* Mention Firebase Studio context */}
-             <code>Firebase Studio / .env.local</code> is correct and try refreshing the page.
+             Could not initialize or monitor the authentication service. Please ensure your Firebase configuration in{' '}
+             <code>.env.local</code> (or Firebase Studio environment) is correct and try refreshing the page.
              <br />
              <span className="text-xs mt-2 block">Details: {authError}</span>
            </AlertDescription>
@@ -109,25 +114,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
      );
    }
 
-   // 3. If not loading and no error, check if the user is logged in.
-   if (!user) {
-      // If not logged in, redirect to the auth page (client-side).
-      // Use an effect to avoid calling router.push during render.
-      if (typeof window !== 'undefined') {
-         // Check if already on the auth page to prevent loop
-         if (window.location.pathname !== '/auth') {
+   // 3. Auth Check and Redirect Logic (Client-side only after loading and no error)
+   // This handles redirecting *away* from /auth if logged in,
+   // and redirecting *to* /auth if not logged in and not already there.
+   if (typeof window !== 'undefined') {
+        if (user && pathname === '/auth') {
+            // Logged in, but on auth page -> redirect to home
+            console.log("AuthProvider: User logged in, redirecting from /auth to /");
+            router.push('/');
+            // Return loading state while redirecting
+            return (
+                <div className="flex items-center justify-center min-h-screen">
+                    <Loader2 className="h-16 w-16 animate-spin text-primary" />
+                </div>
+            );
+        } else if (!user && pathname !== '/auth') {
+            // Not logged in, and not on auth page -> redirect to auth
+            console.log("AuthProvider: User not logged in, redirecting to /auth");
             router.push('/auth');
-         }
-      }
-      // Return null or a minimal loading state while redirecting
-      return (
-          <div className="flex items-center justify-center min-h-screen">
-              <Loader2 className="h-16 w-16 animate-spin text-primary" />
-          </div>
-      );
+            // Return loading state while redirecting
+            return (
+                <div className="flex items-center justify-center min-h-screen">
+                    <Loader2 className="h-16 w-16 animate-spin text-primary" />
+                </div>
+            );
+        }
    }
 
-  // 4. If not loading, no errors, and user is logged in, render children.
+
+  // 4. Render children: If loading is false, no authError, and user state matches current route requirements
+  // (i.e., logged in and not on /auth, OR not logged in and on /auth)
   return (
     <AuthContext.Provider value={{ user, loading, authError }}>
       {children}
@@ -143,3 +159,4 @@ export const useAuth = () => {
   }
   return context;
 };
+```
