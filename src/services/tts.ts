@@ -6,7 +6,7 @@
  */
 
 let utterance: SpeechSynthesisUtterance | null = null;
-let currentText = '';
+let currentText = ''; // Stores the text of the currently active (speaking or paused) utterance
 let isSpeaking = false;
 let isPaused = false;
 
@@ -16,6 +16,17 @@ let onErrorCallback: ((event: SpeechSynthesisErrorEvent) => void) | undefined;
 let onStartCallback: (() => void) | undefined;
 let onPauseCallback: (() => void) | undefined;
 let onResumeCallback: (() => void) | undefined;
+
+// Flag to differentiate natural end from cancellation due to starting new speech
+let stopSpeechCalledPrematurely = false;
+
+/**
+ * Gets the text of the currently active (speaking or paused) utterance.
+ * Returns an empty string if nothing is active.
+ */
+export function getCurrentUtteranceText(): string {
+    return utterance ? utterance.text : '';
+}
 
 /**
  * Speaks the given text using the browser's TTS engine.
@@ -41,16 +52,16 @@ export function speakText(
   }
 
   // If called with the same text and it's paused, resume.
-  if (isPaused && text === currentText && utterance) {
+  if (isPaused && utterance && utterance.text === text) {
     resumeSpeech();
     return;
   }
 
-  // Stop any currently playing speech before starting new
-  // This will also trigger the onEnd listener of the previous utterance if any.
-  stopSpeech(true); // Pass true to prevent double-firing onEnd if called rapidly
+  // Stop any currently playing/paused speech before starting new
+  // Pass true to indicate this stop is premature, preventing the onEnd callback for the old utterance.
+  stopSpeech(true);
 
-  currentText = text;
+  currentText = text; // Update currentText only when starting new speech
   utterance = new SpeechSynthesisUtterance(text);
 
   // Assign callbacks
@@ -70,27 +81,23 @@ export function speakText(
 
   utterance.onend = () => {
     // Check if it ended naturally or was cancelled prematurely
-    const wasCancelled = !isSpeaking && !isPaused;
+    const wasCancelled = stopSpeechCalledPrematurely || (!isSpeaking && !isPaused && !utterance); // Consider utterance being null as cancelled
     console.log(`Speech finished (wasCancelled: ${wasCancelled})`);
 
-    isSpeaking = false;
-    isPaused = false;
-    // Only clear currentText and utterance if it finished or was explicitly stopped
-    // Allows resuming if paused and speakText is called again quickly
-    if (!isPaused) {
-         utterance = null;
-         currentText = '';
+    // Reset state fully only if it wasn't a premature stop
+    if (!wasCancelled) {
+        isSpeaking = false;
+        isPaused = false;
+        utterance = null;
+        currentText = ''; // Clear current text on natural end or non-premature stop
+        onEndCallback?.(); // Call the external onEnd
     }
-
-    // Only call the external onEnd if it wasn't a premature stop caused by a new speakText call
-    if (!wasCancelled || !stopSpeechCalledPrematurely) {
-         onEndCallback?.();
-    }
-     stopSpeechCalledPrematurely = false; // Reset flag
+     // Always reset the premature flag after onend logic
+     stopSpeechCalledPrematurely = false;
   };
 
   utterance.onpause = () => {
-    // Double check it's not already paused to avoid redundant calls
+    // Ensure state consistency
     if (isSpeaking) {
         isPaused = true;
         isSpeaking = false;
@@ -100,7 +107,7 @@ export function speakText(
   };
 
   utterance.onresume = () => {
-     // Double check it's not already speaking to avoid redundant calls
+    // Ensure state consistency
     if (isPaused) {
         isPaused = false;
         isSpeaking = true;
@@ -115,8 +122,8 @@ export function speakText(
     console.error('Speech Synthesis Error:', event);
     onErrorCallback?.(event);
      utterance = null;
-     currentText = '';
-      stopSpeechCalledPrematurely = false; // Reset flag on error
+     currentText = ''; // Clear current text on error
+     stopSpeechCalledPrematurely = false; // Reset flag on error
   };
 
   // Optional: Configure voice, rate, pitch if needed
@@ -148,26 +155,23 @@ export function resumeSpeech(): void {
   }
 }
 
-let stopSpeechCalledPrematurely = false;
 
 /**
  * Stops the currently speaking or paused utterance immediately.
- * @param premature Indicates if stop is called just before starting a new speech.
+ * @param premature Indicates if stop is called just before starting a new speech. If true, the external onEnd callback won't be fired.
  */
 export function stopSpeech(premature = false): void {
   if (typeof window !== 'undefined' && window.speechSynthesis && utterance && (isSpeaking || isPaused)) {
-    stopSpeechCalledPrematurely = premature;
-    // Cancel triggers the 'onend' event listener.
+    console.log(`Speech stop requested (premature: ${premature})`);
+    stopSpeechCalledPrematurely = premature; // Set the flag BEFORE cancelling
+
+    // Cancel triggers the 'onend' event listener eventually.
     window.speechSynthesis.cancel();
-     // Reset state immediately for responsiveness, onend might have a slight delay
+
+    // Reset local state immediately for UI responsiveness, onend handles final cleanup
     isSpeaking = false;
     isPaused = false;
-    // Don't nullify utterance here if premature, allow onend to handle cleanup
-    if (!premature) {
-        utterance = null;
-        currentText = '';
-    }
-    console.log('Speech stop requested');
+    // utterance and currentText are cleared within the onend handler unless it was a premature stop
   } else {
      // Ensure flag is reset if there was nothing to stop
      stopSpeechCalledPrematurely = false;
@@ -176,3 +180,4 @@ export function stopSpeech(premature = false): void {
 
 
 // Removed isSpeechActive, isCurrentlySpeaking, isCurrentlyPaused as state is managed in the component
+

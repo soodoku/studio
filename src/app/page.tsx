@@ -28,7 +28,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { speakText, pauseSpeech, resumeSpeech, stopSpeech } from '@/services/tts';
+// Import TTS functions
+import { speakText, pauseSpeech, resumeSpeech, stopSpeech, getCurrentUtteranceText } from '@/services/tts';
 import { summarizeAudiobookChapter, type SummarizeAudiobookChapterOutput } from '@/ai/flows/summarize-audiobook-chapter';
 import { generateQuizQuestions, type GenerateQuizQuestionsOutput, type GenerateQuizQuestionsInput, type Question } from '@/ai/flows/generate-quiz-questions';
 import { useToast } from '@/hooks/use-toast';
@@ -68,8 +69,10 @@ function HomeContent() {
   const [books, setBooks] = useState<BookItem[]>([]);
   const [booksLoading, setBooksLoading] = useState(true);
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  // State for Browser TTS
+  const [isSpeakingState, setIsSpeakingState] = useState(false);
   const [isPausedState, setIsPausedState] = useState(false);
+
   const [summaryState, setSummaryState] = useState<SummaryState>({ loading: false, data: null, error: null });
   const [quizState, setQuizState] = useState<QuizState>({ loading: false, data: null, error: null });
   const [audioState, setAudioState] = useState<AudioGenerationState>({ loading: false, error: null, audioUrl: null });
@@ -238,22 +241,33 @@ function HomeContent() {
 
   const handleSelectBook = (book: BookItem) => {
     if (selectedBook?.id !== book.id) {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        stopSpeech();
-      }
-        setIsPlaying(false);
+        // Explicitly stop any ongoing speech before switching books
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+            console.log("Stopping speech due to book selection change.");
+            stopSpeech();
+        }
+
+        // Reset all reader-specific states
+        setIsSpeakingState(false);
         setIsPausedState(false);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
-        setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null }); // Load existing audio URL
-        setTextExtractionState({ loading: false, error: null }); // Reset text extraction state
+        setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null });
+        setTextExtractionState({ loading: false, error: null });
         setUserAnswers({});
         setQuizSubmitted(false);
         setQuizScore(null);
-        // Don't load textContent immediately, load on demand
+
+        // Set the new book (textContent might be loaded later)
+        setSelectedBook(book);
+    } else if (viewMode !== 'reader') {
+        // If same book is clicked again but we are in library view, switch to reader
+        // No need to stop speech as it shouldn't be playing in library view
+        setIsSpeakingState(false); // Reset just in case
+        setIsPausedState(false);
     }
-    setSelectedBook(book);
-    setViewMode('reader');
+
+    setViewMode('reader'); // Ensure we are in reader view
   };
 
    // Function to fetch and update text content for a book
@@ -316,12 +330,16 @@ function HomeContent() {
 
 
   const handleGoBackToLibrary = () => {
+     // Explicitly stop speech when going back
      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        console.log("Stopping speech due to navigating back to library.");
         stopSpeech();
      }
+
+     // Reset all reader-specific states
     setSelectedBook(null);
     setViewMode('library');
-     setIsPlaying(false);
+     setIsSpeakingState(false);
      setIsPausedState(false);
      setSummaryState({ loading: false, data: null, error: null });
      setQuizState({ loading: false, data: null, error: null });
@@ -332,47 +350,75 @@ function HomeContent() {
      setQuizScore(null);
   };
 
-
-  const handlePlay = () => {
+  // --- TTS Controls ---
+  const handlePlayPause = () => {
     if (!selectedBook?.textContent) {
-        toast({ variant: "default", title: "No Text", description: "Text content not loaded or available for playback." });
-        return;
-    };
-
-     if (typeof window === 'undefined' || !window.speechSynthesis) {
-         toast({
-            variant: "destructive",
-            title: "TTS Not Supported",
-            description: "Text-to-speech is not available in your browser.",
-         });
-        return;
+      toast({ variant: "default", title: "No Text", description: "Text content not loaded or available for playback." });
+      return;
+    }
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      toast({ variant: "destructive", title: "TTS Not Supported", description: "Text-to-speech is not available in your browser." });
+      return;
     }
 
-    if (isPausedState) {
-      resumeSpeech();
-    } else if (!isPlaying) {
-       speakText(
-         selectedBook.textContent,
-         () => { setIsPlaying(false); setIsPausedState(false); console.log("Playback finished."); },
-         (error) => { console.error("Speech error:", error); setIsPlaying(false); setIsPausedState(false); toast({ variant: "destructive", title: "Speech Error", description: "Could not play audio." }); },
-         () => { setIsPlaying(true); setIsPausedState(false); console.log('Playback started.'); },
-         () => { setIsPlaying(false); setIsPausedState(true); console.log('Playback paused.'); },
-         () => { setIsPlaying(true); setIsPausedState(false); console.log('Playback resumed.'); }
-       );
-    }
-  };
+    const currentUtteranceText = getCurrentUtteranceText();
 
-  const handlePause = () => {
-    if (isPlaying && typeof window !== 'undefined' && window.speechSynthesis) {
+    if (isSpeakingState) {
+      console.log("Requesting pause.");
       pauseSpeech();
+      // State updates handled by onPause callback
+    } else {
+      // If paused and the utterance text matches the current book text, resume
+      if (isPausedState && currentUtteranceText === selectedBook.textContent) {
+        console.log("Requesting resume.");
+        resumeSpeech();
+        // State updates handled by onResume callback
+      } else {
+        // Otherwise, start speaking the current book's text from the beginning
+        console.log("Requesting play for book:", selectedBook.name);
+        speakText(
+          selectedBook.textContent,
+          () => { // onEnd
+            console.log("Playback finished (onEnd callback).");
+            setIsSpeakingState(false);
+            setIsPausedState(false);
+          },
+          (error) => { // onError
+            console.error("Speech error (onError callback):", error);
+            toast({ variant: "destructive", title: "Speech Error", description: "Could not play audio." });
+            setIsSpeakingState(false);
+            setIsPausedState(false);
+          },
+          () => { // onStart
+            console.log('Playback started (onStart callback).');
+            setIsSpeakingState(true);
+            setIsPausedState(false);
+          },
+          () => { // onPause
+            console.log('Playback paused (onPause callback).');
+            setIsSpeakingState(false);
+            setIsPausedState(true);
+          },
+          () => { // onResume
+            console.log('Playback resumed (onResume callback).');
+            setIsSpeakingState(true);
+            setIsPausedState(false);
+          }
+        );
+      }
     }
   };
 
   const handleStop = () => {
-     if (typeof window !== 'undefined' && window.speechSynthesis) {
-        stopSpeech();
-     }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      console.log("Requesting stop.");
+      stopSpeech();
+      // State updates handled by onEnd callback (triggered by cancel)
+    }
   };
+
+  // Update UI state based on TTS events (handled by callbacks passed to speakText)
+  // These are now mostly for logging or specific UI tweaks if needed outside the buttons.
 
  // --- Genkit Flow Handlers ---
 
@@ -381,6 +427,11 @@ function HomeContent() {
         toast({ variant: "default", title: "No Text", description: "Load text content before generating summary." });
         return;
     }
+    if (!user) { // Check for user authentication
+        toast({ variant: "destructive", title: "Authentication Required", description: "Please log in to use AI features." });
+        return;
+    }
+
 
     setSummaryState({ loading: true, data: null, error: null });
     try {
@@ -416,6 +467,11 @@ function HomeContent() {
         toast({ variant: "default", title: "No Text", description: "Load text content before generating quiz." });
         return;
     }
+     if (!user) { // Check for user authentication
+        toast({ variant: "destructive", title: "Authentication Required", description: "Please log in to use AI features." });
+        return;
+    }
+
 
     setQuizState({ loading: true, data: null, error: null });
     setUserAnswers({});
@@ -472,23 +528,26 @@ const handleGenerateAudio = async () => {
 
     try {
         // Placeholder for actual server-side audio file generation
+        // This should ideally be a Cloud Function or a dedicated backend service
+        // that takes the text, uses a server-side TTS (like Google Cloud TTS),
+        // uploads the result to storage, and returns the URL.
         console.log(`Simulating server-side audio generation for book ID: ${selectedBook.id}`);
         await new Promise(resolve => setTimeout(resolve, 4000)); // Simulate generation time
 
         // Assume server generates and uploads to a path like: audiobooks_generated/{userId}/{bookId}.mp3
+        // IMPORTANT: Ensure storage rules allow writing to this path by authenticated users.
         const generatedAudioFileName = `${selectedBook.id}_audio.mp3`;
         const audioStoragePath = `audiobooks_generated/${user.uid}/${generatedAudioFileName}`;
 
         // Simulate getting a download URL (server would return this after upload)
-        // In a real scenario, you might call a Cloud Function/API endpoint here
-        // which performs TTS and uploads the file, returning the URL.
         // For simulation, we create a plausible storage URL structure.
         const simulatedAudioUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}/o/${encodeURIComponent(audioStoragePath)}?alt=media`;
         console.log(`Simulated audio URL: ${simulatedAudioUrl}`);
 
         // Update Firestore with the new audio storage URL
         const bookRef = doc(db, "books", selectedBook.id);
-        if (selectedBook.userId !== user.uid) { // Client-side ownership check
+        // Client-side ownership check (redundant if rules are correct, but good practice)
+        if (selectedBook.userId !== user.uid) {
             throw new Error("Permission denied: You do not own this book.");
         }
 
@@ -497,6 +556,8 @@ const handleGenerateAudio = async () => {
             console.log(`[Firestore] Updated audioStorageUrl for book ${selectedBook.id}`);
 
             // Update local state immediately for responsiveness
+            // Note: This might cause a flicker if onSnapshot updates slightly later.
+            // Consider directly modifying the 'books' state as well for smoother UI.
             setSelectedBook(prev => prev ? { ...prev, audioStorageUrl: simulatedAudioUrl } : null);
             setAudioState({ loading: false, error: null, audioUrl: simulatedAudioUrl });
             toast({
@@ -553,19 +614,9 @@ const handleGenerateAudio = async () => {
         }
         await signOut(auth);
         toast({ title: 'Logged Out', description: 'You have been logged out successfully.' });
-        setSelectedBook(null);
-        setViewMode('library');
-        setBooks([]);
-        setSummaryState({ loading: false, data: null, error: null });
-        setQuizState({ loading: false, data: null, error: null });
-        setAudioState({ loading: false, error: null, audioUrl: null });
-        setTextExtractionState({ loading: false, error: null });
-        setUserAnswers({});
-        setQuizSubmitted(false);
-        setQuizScore(null);
-        setIsPlaying(false);
-        setIsPausedState(false);
-         if (typeof window !== 'undefined' && window.speechSynthesis) stopSpeech();
+        // Reset all application state on logout
+        handleGoBackToLibrary(); // Reset reader view first
+        setBooks([]); // Clear books list
     } catch (error) {
         console.error("Logout failed:", error);
         toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out.' });
@@ -573,7 +624,16 @@ const handleGenerateAudio = async () => {
   };
 
 
-  useEffect(() => { return () => { if (typeof window !== 'undefined' && window.speechSynthesis) stopSpeech(); }; }, [viewMode]);
+   // Cleanup TTS on component unmount or when viewMode changes
+   useEffect(() => {
+      return () => {
+         if (typeof window !== 'undefined' && window.speechSynthesis) {
+            console.log("Stopping speech due to component unmount or view change.");
+            stopSpeech();
+         }
+      };
+   }, [viewMode]); // Re-run cleanup if viewMode changes
+
   useEffect(() => { setMounted(true); }, []);
 
   if (authLoading) {
@@ -757,10 +817,10 @@ const handleGenerateAudio = async () => {
                           <AccordionTrigger><div className="flex items-center gap-2 w-full"><Headphones className="h-5 w-5 flex-shrink-0" /><span className="flex-grow text-left">Listen (Browser TTS)</span></div></AccordionTrigger>
                           <AccordionContent>
                               <div className="flex items-center justify-center gap-4 py-4">
-                                  <Button onClick={isPlaying ? handlePause : handlePlay} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading || (!isPlaying && !isPausedState && typeof window !== 'undefined' && window.speechSynthesis?.speaking)} aria-label={isPlaying ? "Pause" : "Play"}>
-                                      {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                                  <Button onClick={handlePlayPause} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading} aria-label={isSpeakingState ? "Pause" : "Play"}>
+                                      {isSpeakingState ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                                   </Button>
-                                  <Button onClick={handleStop} size="icon" variant="outline" disabled={!isPlaying && !isPausedState} aria-label="Stop"><Square className="h-5 w-5" /></Button>
+                                  <Button onClick={handleStop} size="icon" variant="outline" disabled={!isSpeakingState && !isPausedState} aria-label="Stop"><Square className="h-5 w-5" /></Button>
                               </div>
                                {!selectedBook?.textContent && !textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Load text content first.</p>}
                                {textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Loading text...</p>}
@@ -880,3 +940,4 @@ export default function Home() {
       </SidebarProvider>
   );
 }
+
