@@ -157,7 +157,9 @@ export function speakText(
   };
 
   utterance.onerror = (event) => {
-    console.error('[TTS] Speech Synthesis Error:', event.error, event); // Log the specific error string
+    // Log both the event object and the specific error property
+    console.error('[TTS] Speech Synthesis Error Event:', event);
+    console.error('[TTS] Specific Error:', event.error);
     const erroredUtterance = utterance; // Capture utterance before nulling
 
     // Check if the error is the expected "interrupted" error caused by cancel()
@@ -259,5 +261,3 @@ export function stopSpeech(premature = false): void {
      wasCancelledPrematurely = false; // Ensure flag is reset if synth unavailable
   }
 }
-
-    
