@@ -105,6 +105,7 @@ function HomeContent() {
           ...doc.data(),
           // textContent might not be stored, ensure it defaults safely
           textContent: doc.data().textContent || undefined,
+          createdAt: doc.data().createdAt || serverTimestamp(), // Ensure createdAt exists
         })) as BookItem[];
         setBooks(userBooks);
         setBooksLoading(false);
@@ -145,6 +146,9 @@ function HomeContent() {
             title: "Duplicate File",
             description: `${metadata.fileName} already exists in your library.`,
             });
+            // Even if duplicate, allow refresh logic to run if metadata is different (e.g., new text extracted)
+            // But don't add a new Firestore document. Consider updating existing if needed.
+            // For now, just prevent adding a new doc.
             return;
         }
 
@@ -164,6 +168,7 @@ function HomeContent() {
             const docRef = await addDoc(booksCollection, newBookData);
             console.log("Book added to Firestore with ID: ", docRef.id);
             // toast already shown in FileUpload component
+            // No need to manually add to state, onSnapshot will handle it
         } catch (e) {
             console.error("Error adding book metadata to Firestore: ", e);
             toast({
@@ -174,7 +179,7 @@ function HomeContent() {
             // Consider deleting the uploaded file from storage if DB entry fails?
             // await deleteFileFromStorage(metadata.storageUrl); // Requires implementation
         }
-    }, [user, books, toast]);
+    }, [user, books, toast]); // Removed setBooks from dependencies
 
 
     const deleteBook = async (bookToDelete: BookItem) => {
@@ -244,11 +249,11 @@ function HomeContent() {
         // Explicitly stop any ongoing speech before switching books
         if (typeof window !== 'undefined' && window.speechSynthesis) {
             console.log("Stopping speech due to book selection change.");
-            stopSpeech();
+            stopSpeech(); // Ensure stopSpeech resets state correctly
         }
 
         // Reset all reader-specific states
-        setIsSpeakingState(false);
+        setIsSpeakingState(false); // Reset these immediately
         setIsPausedState(false);
         setSummaryState({ loading: false, data: null, error: null });
         setQuizState({ loading: false, data: null, error: null });
@@ -260,11 +265,21 @@ function HomeContent() {
 
         // Set the new book (textContent might be loaded later)
         setSelectedBook(book);
+        console.log("Selected new book:", book.name, "ID:", book.id);
     } else if (viewMode !== 'reader') {
         // If same book is clicked again but we are in library view, switch to reader
         // No need to stop speech as it shouldn't be playing in library view
+        console.log("Re-selecting book to enter reader mode:", book.name);
         setIsSpeakingState(false); // Reset just in case
         setIsPausedState(false);
+        // Ensure other states are also reset if re-entering reader
+        setSummaryState({ loading: false, data: null, error: null });
+        setQuizState({ loading: false, data: null, error: null });
+        setAudioState({ loading: false, error: null, audioUrl: book.audioStorageUrl || null });
+        setTextExtractionState({ loading: false, error: null });
+        setUserAnswers({});
+        setQuizSubmitted(false);
+        setQuizScore(null);
     }
 
     setViewMode('reader'); // Ensure we are in reader view
@@ -272,12 +287,23 @@ function HomeContent() {
 
    // Function to fetch and update text content for a book
    const loadTextContent = useCallback(async (book: BookItem) => {
-       if (!book || book.textContent) return; // Already loaded or no book selected
+       if (!book || book.textContent) {
+            console.log("Skipping text load: Already loaded or no book.");
+            return; // Already loaded or no book selected
+       }
        if (book.contentType !== 'application/pdf') {
            toast({ variant: "default", title: "Text Extraction", description: "Text extraction is currently only supported for PDF files." });
+           // Set textContent to a message indicating it's not supported
+           setSelectedBook(prev => prev ? { ...prev, textContent: `Text extraction not supported for ${book.contentType}.` } : null);
            return;
        }
+       if (textExtractionState.loading) {
+            console.log("Skipping text load: Already loading.");
+            return; // Already loading
+       }
 
+
+       console.log("Starting text load for book:", book.name, "ID:", book.id);
        setTextExtractionState({ loading: true, error: null });
        try {
            // Fetch the file from storage URL
@@ -290,14 +316,24 @@ function HomeContent() {
 
            // Extract text using the service
            const extractedText = await convertFileToText(file);
+           console.log("Text extraction successful, length:", extractedText.length, "Book ID:", book.id);
 
-            // Update the selected book state locally (important for immediate UI update)
-           setSelectedBook(prev => prev ? { ...prev, textContent: extractedText } : null);
 
-            // Optionally, update Firestore with the extracted text for future caching
+            // Update the selected book state locally ONLY if the current selected book hasn't changed
+           setSelectedBook(prev => {
+               if (prev && prev.id === book.id) {
+                   console.log("Updating selected book state with text content for ID:", book.id);
+                   return { ...prev, textContent: extractedText };
+               }
+               console.log("Selected book changed during text extraction, not updating state. Current ID:", prev?.id, "Extraction ID:", book.id);
+               return prev; // Don't update if the selected book has changed
+           });
+
+
+            // Optional: Update Firestore with the extracted text for future caching
             // Be mindful of the 1MB document limit! Only do this if text is typically small.
             /*
-            if (db && user && extractedText.length < 800000) { // Example limit check
+            if (db && user && book.id && extractedText.length < 800000) { // Example limit check
                  const bookRef = doc(db, "books", book.id);
                  try {
                      await updateDoc(bookRef, { textContent: extractedText });
@@ -317,15 +353,31 @@ function HomeContent() {
            const errorMsg = error instanceof Error ? error.message : "Unknown error during text extraction.";
            setTextExtractionState({ loading: false, error: errorMsg });
            toast({ variant: "destructive", title: "Text Extraction Failed", description: errorMsg });
+            // Update state to show error in text area
+           setSelectedBook(prev => {
+               if (prev && prev.id === book.id) {
+                   return { ...prev, textContent: `Error loading text: ${errorMsg}` };
+               }
+               return prev;
+           });
        }
-   }, [toast]); // Add dependencies as needed
+   }, [toast, textExtractionState.loading]); // Removed user, db dependencies (should be stable)
 
 
     // Trigger text loading when entering reader mode or when selectedBook changes
     useEffect(() => {
         if (viewMode === 'reader' && selectedBook && !selectedBook.textContent && !textExtractionState.loading) {
+            console.log("Effect triggered: Load text for selected book", selectedBook.name);
             loadTextContent(selectedBook);
         }
+         else if (viewMode === 'reader' && selectedBook && selectedBook.textContent) {
+             console.log("Effect triggered: Text content already available for", selectedBook.name);
+         }
+         else if (viewMode === 'reader' && !selectedBook) {
+             console.log("Effect triggered: In reader mode but no book selected.");
+         } else if (viewMode === 'library') {
+              console.log("Effect triggered: In library mode.");
+         }
     }, [viewMode, selectedBook, textExtractionState.loading, loadTextContent]);
 
 
@@ -333,13 +385,13 @@ function HomeContent() {
      // Explicitly stop speech when going back
      if (typeof window !== 'undefined' && window.speechSynthesis) {
         console.log("Stopping speech due to navigating back to library.");
-        stopSpeech();
+        stopSpeech(); // Ensure stopSpeech resets state correctly
      }
 
      // Reset all reader-specific states
     setSelectedBook(null);
     setViewMode('library');
-     setIsSpeakingState(false);
+     setIsSpeakingState(false); // Reset these immediately
      setIsPausedState(false);
      setSummaryState({ loading: false, data: null, error: null });
      setQuizState({ loading: false, data: null, error: null });
@@ -348,6 +400,7 @@ function HomeContent() {
      setUserAnswers({});
      setQuizSubmitted(false);
      setQuizScore(null);
+     console.log("Navigated back to library, state reset.");
   };
 
   // --- TTS Controls ---
@@ -361,31 +414,38 @@ function HomeContent() {
       return;
     }
 
-    const currentUtteranceText = getCurrentUtteranceText();
+    const currentActiveUtteranceText = getCurrentUtteranceText(); // Text of the utterance currently managed by TTS service
+    const currentBookText = selectedBook.textContent;
+
+    console.log("Play/Pause Clicked. isSpeaking:", isSpeakingState, "isPaused:", isPausedState);
+    console.log("Current Book Text (start):", currentBookText?.substring(0, 50) + "...");
+    console.log("Current Utterance Text:", currentActiveUtteranceText?.substring(0, 50) + "...");
+
 
     if (isSpeakingState) {
       console.log("Requesting pause.");
       pauseSpeech();
       // State updates handled by onPause callback
     } else {
-      // If paused and the utterance text matches the current book text, resume
-      if (isPausedState && currentUtteranceText === selectedBook.textContent) {
+      // If paused AND the utterance text matches the current book text, resume
+      if (isPausedState && currentActiveUtteranceText === currentBookText) {
         console.log("Requesting resume.");
         resumeSpeech();
         // State updates handled by onResume callback
       } else {
-        // Otherwise, start speaking the current book's text from the beginning
+        // Otherwise, start speaking the *current* selected book's text from the beginning
         console.log("Requesting play for book:", selectedBook.name);
         speakText(
-          selectedBook.textContent,
+          currentBookText, // Use the currently selected book's text
           () => { // onEnd
-            console.log("Playback finished (onEnd callback).");
+            console.log("Playback finished naturally (onEnd callback).");
             setIsSpeakingState(false);
             setIsPausedState(false);
+            // No need to clear currentText here, tts service handles it
           },
           (error) => { // onError
             console.error("Speech error (onError callback):", error);
-            toast({ variant: "destructive", title: "Speech Error", description: "Could not play audio." });
+            toast({ variant: "destructive", title: "Speech Error", description: `Could not play audio. Error: ${error.error || 'Unknown'}` });
             setIsSpeakingState(false);
             setIsPausedState(false);
           },
@@ -396,26 +456,36 @@ function HomeContent() {
           },
           () => { // onPause
             console.log('Playback paused (onPause callback).');
-            setIsSpeakingState(false);
-            setIsPausedState(true);
+            // Only update state if it was previously speaking
+            if (isSpeakingState) {
+                setIsSpeakingState(false);
+                setIsPausedState(true);
+            }
           },
           () => { // onResume
             console.log('Playback resumed (onResume callback).');
-            setIsSpeakingState(true);
-            setIsPausedState(false);
+             // Only update state if it was previously paused
+            if (isPausedState) {
+                setIsSpeakingState(true);
+                setIsPausedState(false);
+            }
           }
         );
       }
     }
   };
 
-  const handleStop = () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      console.log("Requesting stop.");
-      stopSpeech();
-      // State updates handled by onEnd callback (triggered by cancel)
-    }
+   const handleStop = () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+          console.log("Stop button clicked. Requesting stop.");
+          stopSpeech(); // This should trigger onend eventually
+          // Immediately update UI state for responsiveness
+          setIsSpeakingState(false);
+          setIsPausedState(false);
+          // Note: The onEnd callback in speakText handles the final state reset
+      }
   };
+
 
   // Update UI state based on TTS events (handled by callbacks passed to speakText)
   // These are now mostly for logging or specific UI tweaks if needed outside the buttons.
@@ -423,8 +493,8 @@ function HomeContent() {
  // --- Genkit Flow Handlers ---
 
  const handleSummarize = async () => {
-    if (!selectedBook?.textContent) {
-        toast({ variant: "default", title: "No Text", description: "Load text content before generating summary." });
+    if (!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error) {
+        toast({ variant: "default", title: "No Text Available", description: "Load or finish loading text content before generating summary." });
         return;
     }
     if (!user) { // Check for user authentication
@@ -463,8 +533,8 @@ function HomeContent() {
 
 
   const handleGenerateQuiz = async () => {
-     if (!selectedBook?.textContent) {
-        toast({ variant: "default", title: "No Text", description: "Load text content before generating quiz." });
+     if (!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error) {
+        toast({ variant: "default", title: "No Text Available", description: "Load or finish loading text content before generating quiz." });
         return;
     }
      if (!user) { // Check for user authentication
@@ -513,8 +583,8 @@ function HomeContent() {
 
  // --- Audio Generation Handler ---
 const handleGenerateAudio = async () => {
-     if (!selectedBook?.textContent) {
-        toast({ variant: "default", title: "No Text", description: "Load text content before generating audio file." });
+     if (!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error) {
+        toast({ variant: "default", title: "No Text Available", description: "Load or finish loading text content before generating audio file." });
         return;
     }
     if (!selectedBook.id || !user || !db || !storage) {
@@ -556,9 +626,13 @@ const handleGenerateAudio = async () => {
             console.log(`[Firestore] Updated audioStorageUrl for book ${selectedBook.id}`);
 
             // Update local state immediately for responsiveness
-            // Note: This might cause a flicker if onSnapshot updates slightly later.
-            // Consider directly modifying the 'books' state as well for smoother UI.
-            setSelectedBook(prev => prev ? { ...prev, audioStorageUrl: simulatedAudioUrl } : null);
+            setSelectedBook(prev => {
+                if (prev && prev.id === selectedBook.id) {
+                    return { ...prev, audioStorageUrl: simulatedAudioUrl };
+                }
+                return prev; // Don't update if selection changed
+            });
+
             setAudioState({ loading: false, error: null, audioUrl: simulatedAudioUrl });
             toast({
                 title: "Audio Generated (Simulation)",
@@ -640,8 +714,10 @@ const handleGenerateAudio = async () => {
       return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
   }
   if (!mounted || isMobile === undefined || !user) {
+     // Show loading or placeholder during initial SSR/hydration or if not logged in
      return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>;
   }
+
 
   return (
     <>
@@ -817,12 +893,14 @@ const handleGenerateAudio = async () => {
                           <AccordionTrigger><div className="flex items-center gap-2 w-full"><Headphones className="h-5 w-5 flex-shrink-0" /><span className="flex-grow text-left">Listen (Browser TTS)</span></div></AccordionTrigger>
                           <AccordionContent>
                               <div className="flex items-center justify-center gap-4 py-4">
-                                  <Button onClick={handlePlayPause} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading} aria-label={isSpeakingState ? "Pause" : "Play"}>
+                                  <Button onClick={handlePlayPause} size="icon" variant="outline" disabled={!selectedBook?.textContent || textExtractionState.loading || textExtractionState.error} aria-label={isSpeakingState ? "Pause" : "Play"}>
                                       {isSpeakingState ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                                   </Button>
                                   <Button onClick={handleStop} size="icon" variant="outline" disabled={!isSpeakingState && !isPausedState} aria-label="Stop"><Square className="h-5 w-5" /></Button>
+                                  {/* Add Speed Controls if desired */}
+                                  {/* <select onChange={handleSpeedChange} defaultValue="1">...</select> */}
                               </div>
-                               {!selectedBook?.textContent && !textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Load text content first.</p>}
+                               {(!selectedBook?.textContent || textExtractionState.error) && !textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Load text content first.</p>}
                                {textExtractionState.loading && <p className="text-sm text-muted-foreground text-center">Loading text...</p>}
                                { typeof window !== 'undefined' && !window.speechSynthesis && (<p className="text-sm text-destructive text-center mt-2">TTS not supported.</p>)}
                           </AccordionContent>
@@ -851,7 +929,7 @@ const handleGenerateAudio = async () => {
                                 </div>
                            )}
                            {!audioState.loading && (
-                             <Button onClick={handleGenerateAudio} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || audioState.loading || textExtractionState.loading}>
+                             <Button onClick={handleGenerateAudio} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || audioState.loading || textExtractionState.loading || !!textExtractionState.error}>
                                {audioState.loading ? 'Generating...' : (selectedBook.audioStorageUrl ? 'Regenerate Audio File' : 'Generate Audio File')}
                              </Button>
                            )}
@@ -865,7 +943,7 @@ const handleGenerateAudio = async () => {
                         <AccordionContent>
                           {summaryState.error && <p className="text-sm text-destructive">{summaryState.error}</p>}
                           {summaryState.data && <p className="text-sm">{summaryState.data.summary}</p>}
-                          <Button onClick={handleSummarize} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || summaryState.loading || textExtractionState.loading}>
+                          <Button onClick={handleSummarize} size="sm" className="w-full mt-2" disabled={!selectedBook?.textContent || summaryState.loading || textExtractionState.loading || !!textExtractionState.error}>
                             {summaryState.loading ? 'Generating...' : (summaryState.data ? 'Regenerate' : 'Generate Summary')}
                           </Button>
                            {summaryState.error && summaryState.error.includes('AI service not initialized') && (<p className="text-xs text-destructive mt-2 text-center">{summaryState.error}</p>)}
@@ -905,14 +983,14 @@ const handleGenerateAudio = async () => {
                                 </div>
                               ))}
                                {!quizSubmitted && (<Button onClick={handleQuizSubmit} size="sm" className="w-full mt-4" disabled={quizState.loading || Object.keys(userAnswers).length !== quizState.data.questions.length}>Submit Quiz</Button>)}
-                                 <Button onClick={handleGenerateQuiz} size="sm" variant={quizSubmitted || quizState.data ? "outline" : "default"} className="w-full mt-2" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading}>
+                                 <Button onClick={handleGenerateQuiz} size="sm" variant={quizSubmitted || quizState.data ? "outline" : "default"} className="w-full mt-2" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error}>
                                    {quizState.loading ? 'Generating...' : 'Generate New Quiz'}
                                  </Button>
                             </div>
                           )}
                            {quizState.data && quizState.data.questions.length === 0 && !quizState.loading &&(<p className="text-sm text-muted-foreground">No quiz questions generated.</p>)}
                           {!quizState.data && !quizState.error && (
-                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading}>
+                            <Button onClick={handleGenerateQuiz} size="sm" className="w-full" disabled={!selectedBook?.textContent || quizState.loading || textExtractionState.loading || !!textExtractionState.error}>
                                {quizState.loading ? 'Generating...' : 'Generate Quiz'}
                              </Button>
                           )}
@@ -934,10 +1012,11 @@ const handleGenerateAudio = async () => {
 // Wrap HomeContent with Providers
 export default function Home() {
   return (
-      // AuthProvider is in RootLayout
+      // AuthProvider is in RootLayout now
       <SidebarProvider>
           <HomeContent />
       </SidebarProvider>
   );
 }
 
+    
