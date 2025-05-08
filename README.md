@@ -1,4 +1,3 @@
-
 # AudioBook Buddy
 
 This is a Next.js application built with Firebase Studio that allows users to upload PDF/ePUB files, convert them to audio using Text-to-Speech, take notes, and test their comprehension with AI-generated quizzes.
